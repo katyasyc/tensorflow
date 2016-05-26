@@ -5,10 +5,10 @@ import os
 
 def add(line,key_file,data_file):
     split = line.index(' ')
-    data_file.write(line[split+1:len(line)])
     data_file.seek(0, os.SEEK_END)
     filesize = data_file.tell()
     key_file.write(line[0:split] + ' ' + str(filesize) + '\n')
+    data_file.write(line[split+1:len(line)])
 
 def main():
    key_file = open('key.txt', 'w')
