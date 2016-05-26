@@ -21,7 +21,7 @@ def to_list(line):
 #lowercases strings, removes non-letter characters
 def clean_up(string1):
    string1 = string1.lower()
-   string1 = string1.replace('\n',' ')
+   string1 = string1.replace('\n',' \n')
    string1 = string1.replace('  ',' ')
    string1 = string1.replace('\\','')
 
@@ -76,11 +76,14 @@ def main():
    string1 = clean_up(string1)
    list_of_words = to_list(string1)
    for i in range (0,len(list_of_words)):
+       if '\n' in list_of_words[i]:
+           vector_file.write('\n')
        if list_of_words[i] in keys:
             data_file.seek(int(keys[list_of_words[i]]))
             vector_file.write(data_file.readline())
        else:
             vector_file.write("0 " * 299 + '0\n')
+
 
    """
    vocab = find_vocab(words)
