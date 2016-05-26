@@ -66,7 +66,6 @@ def map_file(key_file):
 
 def main():
 #how do I import any file (specify in console rather than program?
-#bug: output is one shorter if key[words[i]] exists
    test_file = open('test.data', 'r')
    vector_file = open('vectors.data', 'w')
    key_file = open('key.txt', 'r')
@@ -78,6 +77,7 @@ def main():
    for i in range (0,len(list_of_words)):
        if '\n' in list_of_words[i]:
            vector_file.write('\n')
+       list_of_words[i] = list_of_words[i].strip()
        if list_of_words[i] in keys:
             data_file.seek(int(keys[list_of_words[i]]))
             vector_file.write(data_file.readline())
