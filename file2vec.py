@@ -1,5 +1,7 @@
 #takes test file, key as file indexing words to bytes in data file,
 #returns byte indices in data file of words in test file
+#analyzes test file, returning concatenated word vectors separated by . for each line of input
+#words not in word2vec initialized as [0] * 300
 
 import sys
 from random import *
@@ -80,9 +82,10 @@ def main():
        list_of_words[i] = list_of_words[i].strip()
        if list_of_words[i] in keys:
             data_file.seek(int(keys[list_of_words[i]]))
-            vector_file.write(data_file.readline())
+            vector_file.write(data_file.readline().rstrip('\n'))
        else:
-            vector_file.write("0 " * 299 + '0\n')
+            vector_file.write("0 " * 299 + '0')
+       vector_file.write(' . ')
 
 
    """
