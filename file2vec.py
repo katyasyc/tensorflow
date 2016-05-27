@@ -1,6 +1,5 @@
-#takes test file, key as file indexing words to bytes in data file,
-#returns byte indices in data file of words in test file
-#analyzes test file, returning concatenated word vectors separated by . for each line of input
+#takes test file, key as file indexing words to bytes in data file
+#analyzes test file, returning concatenated word vectors separated by : for each line of input
 #words not in word2vec initialized as [0] * 300
 
 import sys
@@ -11,12 +10,12 @@ from random import *
 def to_list(line):
    list_of_words = []
    word = ''
-   for i in range (0,len(line)):
-      if line[i] == ' ':
+   for char in line:
+      if char == ' ':
          list_of_words.append(word)
          word = ''
       else:
-         word += line[i]
+         word += char
    list_of_words.append(word)
    return list_of_words
 
@@ -26,36 +25,7 @@ def clean_up(string1):
    string1 = string1.replace('\n',' \n')
    string1 = string1.replace('  ',' ')
    string1 = string1.replace('\\','')
-
-   """
-   fix this at later date, or never
-   letters = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', ' ']
-
-   for i in range (0,len(string1)):
-      string1iletter = False
-      for j in range (0,len(letters)):
-         if string1[i] == letters[j]:
-            string1iletter = True
-      if string1iletter == False:
-         string1 = string1.replace(string1[i],'')
-   string1 = string1.replace('  ','')
-   """
    return string1
-"""
-#turns a list of words into one-hot vectors
-def find_vocab(words):
-   vocab = []
-   for i in range(0,len(words)):
-      word = words[i]
-      if words[i] not in vocab:
-         vocab.append(word)
-   return vocab
-
-def vector(words,vocab,i):
-   vector = [0] * len(words)
-   vector[vocab.index(words[i])] = 1
-   return vector
-"""
 
 def map_file(key_file):
     keys = {}
@@ -67,7 +37,6 @@ def map_file(key_file):
     return keys
 
 def main():
-#how do I import any file (specify in console rather than program?
    test_file = open('test.data', 'r')
    vector_file = open('vectors.data', 'w')
    key_file = open('key.txt', 'r')
@@ -76,24 +45,20 @@ def main():
    string1 = test_file.read()
    string1 = clean_up(string1)
    list_of_words = to_list(string1)
-   for i in range (0,len(list_of_words)):
+   #index of examples-so we can map them to labels
+   example_index = 0
+   vector_file.write(str(example_index) + ' ; ')
+   for i in range(len(list_of_words)):
        if '\n' in list_of_words[i]:
            vector_file.write('\n')
+           example_index += 1
+           if i != len(list_of_words):
+               vector_file.write(str(example_index) + ' ; ')
        list_of_words[i] = list_of_words[i].strip()
        if list_of_words[i] in keys:
             data_file.seek(int(keys[list_of_words[i]]))
-            vector_file.write(data_file.readline().rstrip('\n'))
+            vector_file.write(data_file.readline().rstrip('\n') + ' : ')
        else:
-            vector_file.write("0 " * 299 + '0')
-       vector_file.write(' . ')
+            vector_file.write("0 " * 300 + ': ')
 
-
-   """
-   vocab = find_vocab(words)
-   print vocab
-
-   word_vectors = []
-   for i in range(0,len(vocab)):
-      word_vectors.append(vector(words,vocab,i))
-"""
 if __name__ == "__main__": main()
