@@ -11,7 +11,7 @@ def bias_variable(shape):
   return tf.Variable(initial)
 
 #defines the first two layers of our neural network
-def define_nn(x, kernel_size, FILTERS, WORD_VECTOR_LENGTH):
+def define_nn(x, kernel_size, FILTERS, WORD_VECTOR_LENGTH, BATCH_SIZE):
     #define weights and biases, make sure we can specify to normalize later
     #correct line: getting error
     #2nd dimension should be "None"

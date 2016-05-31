@@ -25,11 +25,12 @@ TRAIN_FILE_NAME = 'train'
 DEV_FILE_NAME = 'dev'
 WORD_VECS_FILE_NAME = 'output-short.txt'
 DEV = False
-
+"""
 vocab,train_size = find_vocab(TRAIN_FILE_NAME + '.data')
 vocab,dev_size = find_vocab(DEV_FILE_NAME + '.data',  vocab=vocab)
 keys = initialize_vocab(vocab, WORD_VECS_FILE_NAME)
-
+"""
+keys = {}
 # x encodes data: [batch size, l * word vector length]
 # y_ encodes labels: [batch size, classes]
 x = tf.placeholder(tf.float32, [BATCH_SIZE, None])
@@ -66,7 +67,8 @@ def get_all(file_name, lines):
     all_x = pad(batch_x, length, WORD_VECTOR_LENGTH)
     return all_x, all_y
 
-#fill by looping over KERNEL_SIZES, each time initializing a slice
+tf.reshape(x, [BATCH_SIZE,None,1,WORD_VECTOR_LENGTH])
+#loop over KERNEL_SIZES, each time initializing a slice
 for kernel_size in enumerate(KERNEL_SIZES):
     slices, weights, biases = define_nn(x, kernel_size, FILTERS, WORD_VECTOR_LENGTH)
 
