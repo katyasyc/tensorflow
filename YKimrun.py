@@ -1,114 +1,140 @@
 # problems: backend
-# vectors.data needs to be test or something—separate dev and test sets
+#feed_dict rewrites the value of tensors in the graph
+#learning rate, decay not mentioned in paper
+#clean up get_example
 
-#imports
 import tensorflow as tf
 from libs.utils import *
+from random import *
 import matplotlib.pyplot as plt
-from YKim_open_examples.py import get_examples
-#import our data
+import file2vec.py
 
 #define hyperparameters
 WORD_VECTOR_LENGTH = tf.constant(300)
 FILTERS = tf.constant(100)
-KERNEL_SIZES = tf.placeholder(tf.int32, [3, 4, 5])
+KERNEL_SIZES = [3, 4, 5]
 CLASSES = tf.constant(2)
 
 L2_NORM_CONSTRAINT = tf.constant(3)
 TRAIN_DROPOUT = tf.constant(0.5)
-TEST_DROPOUT = tf.constant(1.0)
 
 TRAINING_STEPS = tf.constant(tf.int32, [20000])
 BATCH_SIZE = tf.constant(tf.int32, [50])
 
-TEST_FILE_NAME = vectors.data
-DEV_FILE_NAME
+TRAIN_FILE_NAME = train
+DEV_FILE_NAME = dev
+DEV = FALSE
 
-#create tensors for values and labels
-x = tf.placeholder(tf.float32, [None, WORD_VECTOR_LENGTH * l])
-y = tf.placeholder(tf.int32, [None, 2])
+dev_lines = find_lines(DEV_FILE_NAME.labels)
+train_lines = find_lines(TRAIN_FILE_NAME.labels)
 
-#given a BATCH_SIZE, get examples from test file
-def get_batch(BATCH_SIZE, file_name)
-    #create an empty string to store our batch of vectors
-    batch = ''
-    #import test file
-    examples = open(file_name, 'r')
-    #get file size
-    examples.seek(0, os.SEEK_END)
-    filesize = examples.tell()
-    #go to a random index in file
-    for i in xrange(BATCH_SIZE):
-        examples.seek(randrange(0, filesize))
-        examples.readline()
-        batch.append(examples.readline())
-    return batch
+# x encodes data: [batch size, l * word vector length]
+# y encodes labels: [batch size, classes]
+x = tf.placeholder(tf.float32, [BATCH_SIZE, None])
+y = tf.placeholder(tf.int32, [BATCH_SIZE, CLASSES])
 
-#not sure if this will work, see http://stackoverflow.com/questions/33944683/tensorflow-map-operation-for-tensor
+def find_lines(file_name):
+    for i, l in enumerate(file_name):
+        pass
+    return i
+
+#get random batch of examples from test file
+def get_batch(file_name, lines):
+    batch_x = []
+    batch_y = []
+
+    length = 0
+    for i in range(BATCH_SIZE)
+        #get random line index in file
+        line_index = random.randrange(lines)
+        batch_x.append(file2vec.main(linecache.getline(file_name.data,
+            line_index), WORD_VECTOR_LENGTH, max(KERNEL_SIZES)/2)
+        length = max(max_length, batch_x[i])
+        #get label and turn into one-hot vector—store in python list for now
+        batch_y.append(tf.one_hot(int(linecache.getline(file_name.labels,
+            line_index)], CLASSES, 1, 0)))
+    #check y = batch_y
+    for sample in batch_x:
+        left = (length - tf.size(sample)) / 2
+        right = left
+        if (length - tf.size(sample)) % 2 != 0:
+            right += 1
+        sample = sample.insert(0, [0] * WORD_VECTOR_LENGTH * left)
+        sample = sample.extend([0] * WORD_VECTOR_LENGTH * right)
+    #convert to tensors: 2d [batch length, sample length (for x) or CLASSES (for y)]
+    x = batch_x
+    y = batch_y
+    return x, y
+
+#l2_loss = l2 loss (tf fn returns half of l2 loss w/o sqrt)
+#where Wi is each item in W, W = Wi/sqrt[sum([(Wi*constraint)/l2_loss]^2)]
 def l2_normalize(W):
-    l2_loss = sqrt(tf.scalar_mul(2,tf.nn.L2_loss(W))
+    l2_loss = sqrt(2*tf.nn.L2_loss(W))
     if  l2_loss > L2_NORM_CONSTRAINT:
-        W = sqrt(tf.scalar_mul(L2_NORM_CONSTRAINT/l2_loss, W)^2)
+        W = tf.scalar_mul(1/sqrt(tf.reduce_sum(tf.square(tf.scalar_mul(L2_NORM_CONSTRAINT/l2_loss, W), 2))), W)
+    return W
 
+#I don't think appending will work here— i don't understand that part of the code
 def define_nn(kernel_size)
     #define weights and biases—make sure we can specify to normalize later
-    W = tf.truncated_normal([kernel_size, l, 1, FILTERS], stddev=0.1)
+    W = tf.truncated_normal([kernel_size, None, 1, FILTERS], stddev=0.1)
     b = bias_variable(tf.constant(0.1, [FILTERS]=shape))
     #convolve—each neuron iterates by 1 filter, 1 word
     conv = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="SAME")
     #apply bias and relu
     relu = tf.nn.relu(tf.nn.bias_add(conv, b))
     #max pool; each neuron sees 1 filter and returns max over l
-    pooled = tf.nn.max_pool(relu, ksize=[1, l, 1, 1],
-        strides=[1, l, 1, 1], padding='SAME')
+    pooled = tf.nn.max_pool(relu, ksize=[1, None, 1, 1],
+        strides=[1, None, 1, 1], padding='SAME')
     slices.append(pooled)
     weights.append(W)
     biases.append(b)
 
-#fill slices[] by looping over KERNEL_SIZES, each time running the network
-#keep weights and biases to modify later
+#fill by looping over KERNEL_SIZES, each time initializing a slice
 slices = []
 weights = []
 biases = []
 
 for kernel_size in enumerate(KERNEL_SIZES):
-    define_nn(kernel_size, l, FILTERS)
+    define_nn(kernel_size)
 
-#combine all slices in a vector
-h_pool = tf.concat(len(KERNEL_SIZES), slices)
+#combine all slices in a single vector
+h_pool = tf.concat(2, slices)
 h_pool_flat = tf.reshape(h_pool, [-1, len(KERNEL_SIZES) * FILTERS])
 
 #apply dropout (p = TRAIN_DROPOUT or TEST_DROPOUT)
-#tf.nn.dropout op automatically scales neuron outputs in addition to masking them
 dropout = tf.placeholder(tf.float32)
 h_pool_drop = tf.nn.dropout(h_pool, keep_prob)
 
-#send max pooled, dropped out vector to a fully connected softmax layer with CLASSES classes
+#fully connected softmax layer
 W_fc = tf.truncated_normal([len(KERNEL_SIZES) * FILTERS, CLASSES], stddev=0.1)
 b_fc = bias_variable(tf.constant(0.1, [CLASSES]=shape))
-
-y_conv=tf.nn.softmax(tf.matmul(h_pool_drop, W_fc) + b_fc)
+y_conv = tf.nn.softmax(tf.matmul(h_pool_drop, W_fc) + b_fc)
 
 #define error for training steps
-cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_conv), reduction_indices=[1]))
-train_step = tf.train.AdamOptimizer(1e-4).minimize(cross_entropy)
+cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_conv),
+    reduction_indices=[1]))
+train_step = tf.train.AdadeltaOptimizer().minimize(cross_entropy)
+
 #define accuracy for evaluation
 correct_prediction = tf.equal(tf.argmax(y_conv,1), tf.argmax(y_,1))
 accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
 
 #run session
-sess = tf.Session()
-#these look like they require imports
+sess = tf.Session(config=tf.ConfigProto(inter_op_parallelism_threads=1,
+    intra_op_parallelism_threads=10, use_per_session_threads=True))
 sess.run(tf.initialize_all_variables())
 for i in TRAINING_STEPS:
-    #sst2vec = name of file we are working from
-  batch = sst2vec.train.get_batch(BATCH_SIZE,TEST_FILE_NAME)
+  batch_x, batch_y = get_batch(TRAIN_FILE_NAME, train_lines)
   if i%100 == 0:
     train_accuracy = accuracy.eval(feed_dict={
         x:batch[0], y_: batch[1], dropout: 1.0})
     print("step %d, training accuracy %g"%(i, train_accuracy))
-  #feed_dict is an optional argument that overrides the value of tensors in the graph
-  train_step.run(feed_dict={x: batch[0], y_: batch[1], dropout: TRAIN_DROPOUT})
+  #prints accuracy for dev set every 1000 examples, DEV is a hyperparameter boolean
+  if DEV and i%1000 = 0:
+      print("dev set accuracy %g"%accuracy.eval(feed_dict={
+          x: DEV_FILE_NAME.data, y_: DEV_FILE_NAME.labels, dropout: 1.0}))
+  train_step.run(feed_dict={x: batch_x, y_: batch_y, dropout: TRAIN_DROPOUT})
 
   #normalize weights
   for W in weights:
@@ -119,6 +145,10 @@ for i in TRAINING_STEPS:
       b = l2_normalize(b)
   b_fc = l2_normalize(b_fc)
 
-#print accuracy of results
+#print test accuracy of results
 print("test accuracy %g"%accuracy.eval(feed_dict={
-    x: sst2vec.test.strings, y_: sst2vec.test.labels, dropout: TEST_DROPOUT}))
+    x: TRAIN_FILE_NAME.data, y_: TRAIN_FILE_NAME.labels, dropout: 1.0}))
+#print dev accuracy of results
+if DEV:
+    print("dev set accuracy %g"%accuracy.eval(feed_dict={
+        x: DEV_FILE_NAME.data, y_: DEV_FILE_NAME.labels, dropout: 1.0}))

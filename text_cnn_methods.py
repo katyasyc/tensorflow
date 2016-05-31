@@ -1,11 +1,27 @@
 import tensorflow as tf
 
+#initializes weights, random with stddev of .1
+def weight_variable(shape):
+  initial = tf.truncated_normal(shape, stddev=0.1)
+  return tf.Variable(initial)
+
+#initializes biases, all at .1
+def bias_variable(shape):
+  initial = tf.constant(0.1, shape=shape)
+  return tf.Variable(initial)
+
 #defines the first two layers of our neural network
-def define_nn(kernel_size, FILTERS):
+def define_nn(x, kernel_size, FILTERS, WORD_VECTOR_LENGTH):
     #define weights and biases, make sure we can specify to normalize later
-    W = tf.truncated_normal([kernel_size, None, 1, FILTERS], stddev=0.1)
-    b = bias_variable(tf.constant(0.1, [FILTERS]=shape))
+    #correct line: getting error
+    #2nd dimension should be "None"
+    #fix kernel_size
+    print kernel_size
+    W = weight_variable([3, WORD_VECTOR_LENGTH, 1, FILTERS])
+    b = bias_variable([FILTERS])
     #convolve: each neuron iterates by 1 filter, 1 word
+    print tf.shape(x)
+    print tf.size(x)
     conv = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="SAME")
     #apply bias and relu
     relu = tf.nn.relu(tf.nn.bias_add(conv, b))
@@ -32,8 +48,8 @@ def find_lines(file_name):
 
 #l2_loss = l2 loss (tf fn returns half of l2 loss w/o sqrt)
 #where Wi is each item in W, W = Wi/sqrt[sum([(Wi*constraint)/l2_loss]^2)]
-def l2_normalize(W):
-    l2_loss = sqrt(2*tf.nn.L2_loss(W))
+def l2_normalize(W, L2_NORM_CONSTRAINT):
+    l2_loss = sqrt(2 * tf.nn.L2_loss(W))
     if  l2_loss > L2_NORM_CONSTRAINT:
         W = tf.scalar_mul(1/sqrt(tf.reduce_sum(tf.square(
             tf.scalar_mul(L2_NORM_CONSTRAINT/l2_loss, W), 2))), W)
@@ -64,22 +80,20 @@ def line_to_vec(data, d, WORD_VECTOR_LENGTH, padding):
 
 #initialize vocabulary of file_name with word2vec or vecs initialized with zeroes
 #taking out found (replacing it with querying d again) would make code cleaner, but slower
-def initialize_vocab(d=dict, file_name, vectors_vocab, word_vectors):
+def initialize_vocab(d, file_name, vectors_vocab, word_vectors):
     text_file = open(file_name, 'r')
     word2vec_vocab = open(vectors_vocab, 'r')
     word2vec_vectors = open(word_vectors, 'r')
     words = tokenize(text_file.read())
     for word in words:
         if word not in d:
-            found = False
-            for i in xrange (3000000):   #number of words in word2vec
-                line = word2vec_vocab.readline().strip()
-                if word == line[:line.split(' ')]:
-                    word2vec_vectors.seek(int(line[line.split(' ') + 1:]))
+            for i in range(3000000):   #number of words in word2vec
+                line = tokenize(word2vec_vocab.readline().strip())
+                if word == line[0]:
+                    word2vec_vectors.seek(int(line[1]))
                     d[word] = tokenize(word2vec_vectors.readline().strip())
-                    found = True
                     break
-            if found == False:
+            else:
                 d[word] = [0] * 300
     return d
 
