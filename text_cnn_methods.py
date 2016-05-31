@@ -40,12 +40,6 @@ def pad(batch_x, length, WORD_VECTOR_LENGTH):
         sample = sample.extend([0] * WORD_VECTOR_LENGTH * right)
     return batch_x
 
-#returns one less than the number of lines in a file
-def find_lines(file_name):
-    for i, l in enumerate(file_name):
-        pass
-    return i
-
 #l2_loss = l2 loss (tf fn returns half of l2 loss w/o sqrt)
 #where Wi is each item in W, W = Wi/sqrt[sum([(Wi*constraint)/l2_loss]^2)]
 def l2_normalize(W, L2_NORM_CONSTRAINT):
@@ -78,23 +72,32 @@ def line_to_vec(data, d, WORD_VECTOR_LENGTH, padding):
     word_vectors.extend([0] * (WORD_VECTOR_LENGTH * padding))
     return word_vectors
 
-#initialize vocabulary of file_name with word2vec or vecs initialized with zeroes
-#taking out found (replacing it with querying d again) would make code cleaner, but slower
-def initialize_vocab(d, file_name, vectors_vocab, word_vectors):
+#create a vocabulary list from a file
+def find_vocab(file_name, vocab=None, master_key=None):
+    if vocab is None:
+        vocab = []
+    if master_key is None:
+        master_key = {}
     text_file = open(file_name, 'r')
-    word2vec_vocab = open(vectors_vocab, 'r')
-    word2vec_vectors = open(word_vectors, 'r')
-    words = tokenize(text_file.read())
-    for word in words:
-        if word not in d:
-            for i in range(3000000):   #number of words in word2vec
-                line = tokenize(word2vec_vocab.readline().strip())
-                if word == line[0]:
-                    word2vec_vectors.seek(int(line[1]))
-                    d[word] = tokenize(word2vec_vectors.readline().strip())
-                    break
-            else:
-                d[word] = [0] * 300
-    return d
+    list_of_words = tokenize(text_file.read())
+    for word in list_of_words:
+        if word not in master_key and word not in vocab:
+            vocab.append(word)
+    return vocab, len(list_of_words)
+
+#initialize list of vocabulary with word2vec or zeroes
+def initialize_vocab(vocab, word_vectors, master_key=None):
+    if master_key is None:
+        master_key = {}
+    word2vec = open(word_vectors, 'r')
+    word2vec.readline()
+    for i in range(3000000):   #number of words in word2vec
+        line = tokenize(word2vec.readline().strip())
+        if line[0] in vocab:
+            master_key[vocab[vocab.index(line[0])]] = line[1:]
+            vocab.remove(line[0])
+    for word in vocab:
+        master_key[word] = [0] * 300
+    return master_key
 
 if __name__ == "__main__": main()

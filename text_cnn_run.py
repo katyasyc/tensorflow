@@ -23,14 +23,12 @@ BATCH_SIZE = 50
 
 TRAIN_FILE_NAME = 'train'
 DEV_FILE_NAME = 'dev'
+WORD_VECS_FILE_NAME = 'output-short.txt'
 DEV = False
 
-keys = {}
-#keys = initialize_vocab(keys, TRAIN_FILE_NAME + '.data', 'key.txt', 'data.txt')
-#keys = initialize_vocab(keys, DEV_FILE_NAME + '.data', 'key.txt', 'data.txt')
-
-dev_lines = find_lines(DEV_FILE_NAME + '.labels')
-train_lines = find_lines(TRAIN_FILE_NAME + '.labels')
+vocab,train_size = find_vocab(TRAIN_FILE_NAME + '.data')
+vocab,dev_size = find_vocab(DEV_FILE_NAME + '.data',  vocab=vocab)
+keys = initialize_vocab(vocab, WORD_VECS_FILE_NAME)
 
 # x encodes data: [batch size, l * word vector length]
 # y_ encodes labels: [batch size, classes]
@@ -95,7 +93,7 @@ sess = tf.Session(config=tf.ConfigProto(inter_op_parallelism_threads=1,
                   intra_op_parallelism_threads=10, use_per_session_threads=True))
 sess.run(tf.initialize_all_variables())
 for i in TRAINING_STEPS:
-    batch_x, batch_y = get_batch(TRAIN_FILE_NAME, train_lines)
+    batch_x, batch_y = get_batch(TRAIN_FILE_NAME, train_size)
     if i%100 == 0:
         train_accuracy = accuracy.eval(feed_dict={
             x: batch_x, y_: batch_y, dropout: 1.0})
@@ -116,11 +114,11 @@ for i in TRAINING_STEPS:
     b_fc = l2_normalize(b_fc, L2_NORM_CONSTRAINT)
 
 #print test accuracy of results
-all_x, all_y = get_all(TRAIN_FILE_NAME, lines)
+all_x, all_y = get_all(TRAIN_FILE_NAME, train_size)
 print("test accuracy %g"%accuracy.eval(feed_dict={x: all_x, y_: all_y, dropout: 1.0}))
 #print dev accuracy of results
 if DEV:
-    all_x, all_y = get_all(DEV_FILE_NAME, lines)
+    all_x, all_y = get_all(DEV_FILE_NAME, dev_size)
     print("dev set accuracy %g"%accuracy.eval(feed_dict={x: all_x, y_: all_y, dropout: 1.0}))
 
 if __name__ == "__main__": main()
