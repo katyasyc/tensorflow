@@ -11,13 +11,13 @@ def bias_variable(shape):
   return tf.Variable(initial)
 
 #defines the first two layers of our neural network
-def define_nn(x, kernel_size, FILTERS, WORD_VECTOR_LENGTH, BATCH_SIZE):
+def define_nn(x, kernel_size, length, FILTERS, WORD_VECTOR_LENGTH, slices, weights, biases):
     #define weights and biases, make sure we can specify to normalize later
     #correct line: getting error
     #2nd dimension should be "None"
     #fix kernel_size
     print kernel_size
-    W = weight_variable([3, WORD_VECTOR_LENGTH, 1, FILTERS])
+    W = weight_variable([kernel_size, 1, WORD_VECTOR_LENGTH, FILTERS])
     b = bias_variable([FILTERS])
     #convolve: each neuron iterates by 1 filter, 1 word
     print tf.shape(x)
@@ -25,10 +25,19 @@ def define_nn(x, kernel_size, FILTERS, WORD_VECTOR_LENGTH, BATCH_SIZE):
     conv = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="SAME")
     #apply bias and relu
     relu = tf.nn.relu(tf.nn.bias_add(conv, b))
+    print relu
     #max pool; each neuron sees 1 filter and returns max over l
-    pooled = tf.nn.max_pool(relu, ksize=[1, None, 1, 1],
-        strides=[1, None, 1, 1], padding='SAME')
-    return pooled, W, b
+    pooled = tf.nn.max_pool(relu, ksize=[1, length, 1, 1],
+        strides=[1, length, 1, 1], padding='SAME')
+    slices.insert(len(slices), pooled)
+    weights.insert(len(weights), W)
+    biases.insert(len(biases), b)
+    return slices, weights, biases
+
+def one_hot(category, CLASSES):
+    one_hot = [0] * CLASSES
+    one_hot[category] = 1
+    return one_hot
 
 def pad(batch_x, length, WORD_VECTOR_LENGTH):
     for sample in batch_x:
@@ -62,10 +71,30 @@ def tokenize(line):
    list_of_words.append(word.strip())
    return list_of_words
 
+def clean_str(string, TREC=False):
+    """
+    Tokenization/string cleaning for all datasets except for SST.
+    Every dataset is lower cased except for TREC
+    """
+    string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)
+    string = re.sub(r"\'s", " \'s", string)
+    string = re.sub(r"\'ve", " \'ve", string)
+    string = re.sub(r"n\'t", " n\'t", string)
+    string = re.sub(r"\'re", " \'re", string)
+    string = re.sub(r"\'d", " \'d", string)
+    string = re.sub(r"\'ll", " \'ll", string)
+    string = re.sub(r",", " , ", string)
+    string = re.sub(r"!", " ! ", string)
+    string = re.sub(r"\(", " \( ", string)
+    string = re.sub(r"\)", " \) ", string)
+    string = re.sub(r"\?", " \? ", string)
+    string = re.sub(r"\s{2,}", " ", string)
+    return string.strip() if TREC else string.strip().lower()
+
 #takes a line of text, key with vocab indexed to vectors
 #returns word vectors concatenated into a list
 def line_to_vec(data, d, WORD_VECTOR_LENGTH, padding):
-    list_of_words = tokenize(data.lowercase())
+    list_of_words = tokenize(clean_str(data))
     word_vectors = [0] * (WORD_VECTOR_LENGTH * padding)
     for word in list_of_words:
         word_vectors.extend(d[word])
