@@ -1,12 +1,12 @@
-# problems: backend
 #feed_dict rewrites the value of tensors in the graph
 #learning rate, decay not mentioned in paper
-#clean up get_example
-#fix the calls to files at the bottom: mnist convnet was looking at methods, not filenames!!
 # implement updating vocab
+# choose same line twice ok?
+# flags?
 
 import tensorflow as tf
-from random import *
+import random
+import linecache
 from text_cnn_methods import *
 
 #define hyperparameters
@@ -26,30 +26,29 @@ TRAIN_FILE_NAME = 'train'
 DEV_FILE_NAME = 'dev'
 WORD_VECS_FILE_NAME = 'output-short.txt'
 DEV = False
-
+"""
 vocab,train_size = find_vocab(TRAIN_FILE_NAME + '.data')
 vocab,dev_size = find_vocab(DEV_FILE_NAME + '.data',  vocab=vocab)
 keys = initialize_vocab(vocab, WORD_VECS_FILE_NAME)
-
-length = MAX_LENGTH + max(KERNEL_SIZES) - max(KERNEL_SIZES) % 2
+"""
 keys = {}
+train_size = 500
+dev_size = 500
 # x encodes data: [batch size, l * word vector length]
 # y_ encodes labels: [batch size, classes]
-x = tf.placeholder(tf.float32, [BATCH_SIZE, length * WORD_VECTOR_LENGTH])
+x = tf.placeholder(tf.float32, [BATCH_SIZE, MAX_LENGTH * WORD_VECTOR_LENGTH])
 y_ = tf.placeholder(tf.float32, [BATCH_SIZE, CLASSES])
 
 #get random batch of examples from test file
 def get_batch(file_name, lines):
     batch_x = []
     batch_y = []
-    length = 0
     for i in range(BATCH_SIZE):
         #get random line index in file
         line_index = random.randrange(lines)
         batch_x.append(line_to_vec(linecache.getline(file_name + '.data',
-                       line_index), keys, WORD_VECTOR_LENGTH, length))
-        #length = max(max_length, len(batch_x[i])/300)
-        #get label and turn into one-hot vector: store in python list for now
+                       line_index), keys, WORD_VECTOR_LENGTH))
+        #get label and turn into one-hot vector
         batch_y.append(one_hot(int(linecache.getline(file_name + '.labels',
                        line_index), CLASSES)))
     #batch_x = pad(batch_x, length, WORD_VECTOR_LENGTH)
@@ -61,15 +60,15 @@ def get_all(file_name, lines):
     all_y = []
     text_file = open(file_name, 'r')
     for line in lines:
-        all_x.append(line_to_vec(text_file.readline().replace(':', ''), keys,
-                     WORD_VECTOR_LENGTH, max(KERNEL_SIZES)/2))
-        all_y.append(tf.one_hot(int(linecache.getline(file_name + '.labels',
-                     line_index), CLASSES, 1, 0)))
-    all_x = pad(batch_x, length, WORD_VECTOR_LENGTH)
+        all_x.insert(len(all_x), line_to_vec(text_file.readline().replace(':', ''), keys,
+                     WORD_VECTOR_LENGTH))
+        all_y.insert(len(all_y), one_hot(int(linecache.getline(file_name + '.labels',
+                     line_index), CLASSES)))
+    all_x = pad(batch_x, MAX_LENGTH, WORD_VECTOR_LENGTH)
     return all_x, all_y
 
 print tf.shape(x)[0]
-x = tf.reshape(x, [BATCH_SIZE, length, 1 ,WORD_VECTOR_LENGTH])
+x = tf.reshape(x, [BATCH_SIZE, MAX_LENGTH, 1 ,WORD_VECTOR_LENGTH])
 print tf.shape(x)
 #loop over KERNEL_SIZES, each time initializing a slice
 try: slices
@@ -79,7 +78,7 @@ except NameError: weights = []
 try: biases
 except NameError: biases = []
 for kernel_size in KERNEL_SIZES:
-    slices, weights, biases = define_nn(x, kernel_size, length, FILTERS, WORD_VECTOR_LENGTH, slices, weights, biases)
+    slices, weights, biases = define_nn(x, kernel_size, MAX_LENGTH, FILTERS, WORD_VECTOR_LENGTH, slices, weights, biases)
 print slices
 h_pool = tf.concat(3, slices)
 print h_pool

@@ -1,4 +1,5 @@
 import tensorflow as tf
+import sys, re
 
 #initializes weights, random with stddev of .1
 def weight_variable(shape):
@@ -93,12 +94,12 @@ def clean_str(string, TREC=False):
 
 #takes a line of text, key with vocab indexed to vectors
 #returns word vectors concatenated into a list
-def line_to_vec(data, d, WORD_VECTOR_LENGTH, padding):
+def line_to_vec(data, d, WORD_VECTOR_LENGTH):
     list_of_words = tokenize(clean_str(data))
-    word_vectors = [0] * (WORD_VECTOR_LENGTH * padding)
+    word_vectors = [0] * (WORD_VECTOR_LENGTH)
     for word in list_of_words:
         word_vectors.extend(d[word])
-    word_vectors.extend([0] * (WORD_VECTOR_LENGTH * padding))
+    word_vectors.extend([0] * (WORD_VECTOR_LENGTH))
     return word_vectors
 
 #create a vocabulary list from a file
@@ -112,7 +113,8 @@ def find_vocab(file_name, vocab=None, master_key=None):
     for word in list_of_words:
         if word not in master_key and word not in vocab:
             vocab.append(word)
-    return vocab, len(list_of_words)
+    return vocab
+    #, len(list_of_words)
 
 #initialize list of vocabulary with word2vec or zeroes
 def initialize_vocab(vocab, word_vectors, master_key=None):
