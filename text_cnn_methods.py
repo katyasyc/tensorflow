@@ -1,5 +1,6 @@
 import tensorflow as tf
 import sys, re
+import random
 
 #initializes weights, random with stddev of .1
 def weight_variable(shape):
@@ -12,14 +13,14 @@ def bias_variable(shape):
   return tf.Variable(initial)
 
 #defines the first two layers of our neural network
-def define_nn(x, kernel_size, length, FILTERS, WORD_VECTOR_LENGTH, slices, weights, biases):
+def define_nn(x, kernel_size, params, slices, weights, biases):
     #define weights and biases, make sure we can specify to normalize later
     #correct line: getting error
     #2nd dimension should be "None"
     #fix kernel_size
     print kernel_size
-    W = weight_variable([kernel_size, 1, WORD_VECTOR_LENGTH, FILTERS])
-    b = bias_variable([FILTERS])
+    W = weight_variable([kernel_size, 1, params['WORD_VECTOR_LENGTH'], params['FILTERS']])
+    b = bias_variable([params['FILTERS']])
     #convolve: each neuron iterates by 1 filter, 1 word
     print tf.shape(x)
     print tf.size(x)
@@ -29,7 +30,7 @@ def define_nn(x, kernel_size, length, FILTERS, WORD_VECTOR_LENGTH, slices, weigh
     print relu
     #max pool; each neuron sees 1 filter and returns max over l
     pooled = tf.nn.max_pool(relu, ksize=[1, length, 1, 1],
-        strides=[1, length, 1, 1], padding='SAME')
+        strides=[1, params['MAX_LENGTH'], 1, 1], padding='SAME')
     slices.insert(len(slices), pooled)
     weights.insert(len(weights), W)
     biases.insert(len(biases), b)
@@ -40,14 +41,20 @@ def one_hot(category, CLASSES):
     one_hot[category] = 1
     return one_hot
 
-def pad(batch_x, length, WORD_VECTOR_LENGTH):
+#sample should be a list, but it's being a string :(
+def pad(batch_x, params):
+    print batch_x
+    print type(batch_x)
+    print len(batch_x)
+    print batch_x[0]
+    print type(batch_x[0])
     for sample in batch_x:
-        left = (length - len(sample)) / 2
+        left = (params['MAX_LENGTH'] - len(sample)) / 2
         right = left
-        if (length - len(sample)) % 2 != 0:
+        if (params['MAX_LENGTH'] - len(sample)) % 2 != 0:
             right += 1
-        sample = sample.insert(0, [0] * WORD_VECTOR_LENGTH * left)
-        sample = sample.extend([0] * WORD_VECTOR_LENGTH * right)
+        sample = sample.insert(0, [0] * params['WORD_VECTOR_LENGTH'] * left)
+        sample = sample.extend([0] * params['WORD_VECTOR_LENGTH'] * right)
     return batch_x
 
 #l2_loss = l2 loss (tf fn returns half of l2 loss w/o sqrt)
@@ -58,6 +65,18 @@ def l2_normalize(W, L2_NORM_CONSTRAINT):
         W = tf.scalar_mul(1/sqrt(tf.reduce_sum(tf.square(
             tf.scalar_mul(L2_NORM_CONSTRAINT/l2_loss, W), 2))), W)
     return W
+
+def shuffle_file(params, lines, d):
+    input_file = open(params['TRAIN_FILE_NAME'] + '.data', 'r')
+    output_file = open(params['TRAIN_FILE_NAME'] + '.labels', 'r')
+    input_list = []
+    output_list = []
+    for line in range(lines):
+        input_list.append(line_to_vec(input_file.readline(), d, params))
+        output_list.append(line_to_vec(output_file.readline(), d, params))
+    z = zip(input_list, output_list)
+    random.shuffle(z)
+    return zip(*z)
 
 #takes a line of text, returns an array of strings where ecah string is a word
 def tokenize(line):
@@ -72,7 +91,14 @@ def tokenize(line):
    list_of_words.append(word.strip())
    return list_of_words
 
-def clean_str(string, TREC=False):
+def clean_str(string, TREC=False, SST=False):
+    if SST == True:
+        """
+        Tokenization/string cleaning for the SST dataset
+        """
+        string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)
+        string = re.sub(r"\s{2,}", " ", string)
+        return string.strip().lower()
     """
     Tokenization/string cleaning for all datasets except for SST.
     Every dataset is lower cased except for TREC
@@ -94,30 +120,29 @@ def clean_str(string, TREC=False):
 
 #takes a line of text, key with vocab indexed to vectors
 #returns word vectors concatenated into a list
-def line_to_vec(data, d, WORD_VECTOR_LENGTH):
-    list_of_words = tokenize(clean_str(data))
-    word_vectors = [0] * (WORD_VECTOR_LENGTH)
+def line_to_vec(sample, d, params):
+    list_of_words = tokenize(clean_str(sample, params['SST']))
+    word_vectors = []
     for word in list_of_words:
         word_vectors.extend(d[word])
-    word_vectors.extend([0] * (WORD_VECTOR_LENGTH))
     return word_vectors
 
 #create a vocabulary list from a file
-def find_vocab(file_name, vocab=None, master_key=None):
+def find_vocab(file_name, SST, vocab=None, master_key=None):
     if vocab is None:
         vocab = []
     if master_key is None:
         master_key = {}
     text_file = open(file_name, 'r')
-    list_of_words = tokenize(text_file.read())
+    list_of_words = tokenize(clean_str(text_file.read()), SST=SST)
     for word in list_of_words:
         if word not in master_key and word not in vocab:
             vocab.append(word)
     return vocab
-    #, len(list_of_words)
 
 #initialize list of vocabulary with word2vec or zeroes
 def initialize_vocab(vocab, word_vectors, master_key=None):
+    print "vocab size: " + str(len(vocab))
     if master_key is None:
         master_key = {}
     word2vec = open(word_vectors, 'r')
