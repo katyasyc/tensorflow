@@ -29,7 +29,7 @@ def define_nn(x, kernel_size, params, slices, weights, biases):
     relu = tf.nn.relu(tf.nn.bias_add(conv, b))
     print relu
     #max pool; each neuron sees 1 filter and returns max over l
-    pooled = tf.nn.max_pool(relu, ksize=[1, length, 1, 1],
+    pooled = tf.nn.max_pool(relu, ksize=[1, params['MAX_LENGTH'], 1, 1],
         strides=[1, params['MAX_LENGTH'], 1, 1], padding='SAME')
     slices.insert(len(slices), pooled)
     weights.insert(len(weights), W)
@@ -41,20 +41,15 @@ def one_hot(category, CLASSES):
     one_hot[category] = 1
     return one_hot
 
-#sample should be a list, but it's being a string :(
+#sample should be a list, but it's being None :()
 def pad(batch_x, params):
-    print batch_x
-    print type(batch_x)
-    print len(batch_x)
-    print batch_x[0]
-    print type(batch_x[0])
     for sample in batch_x:
         left = (params['MAX_LENGTH'] - len(sample)) / 2
         right = left
         if (params['MAX_LENGTH'] - len(sample)) % 2 != 0:
             right += 1
-        sample = sample.insert(0, [0] * params['WORD_VECTOR_LENGTH'] * left)
-        sample = sample.extend([0] * params['WORD_VECTOR_LENGTH'] * right)
+        sample.insert(0, [0] * params['WORD_VECTOR_LENGTH'] * left)
+        sample.extend([0] * params['WORD_VECTOR_LENGTH'] * right)
     return batch_x
 
 #l2_loss = l2 loss (tf fn returns half of l2 loss w/o sqrt)
@@ -66,7 +61,7 @@ def l2_normalize(W, L2_NORM_CONSTRAINT):
             tf.scalar_mul(L2_NORM_CONSTRAINT/l2_loss, W), 2))), W)
     return W
 
-def shuffle_file(params, lines, d):
+def get_all(file_name, params, lines, d):
     input_file = open(params['TRAIN_FILE_NAME'] + '.data', 'r')
     output_file = open(params['TRAIN_FILE_NAME'] + '.labels', 'r')
     input_list = []
@@ -74,9 +69,17 @@ def shuffle_file(params, lines, d):
     for line in range(lines):
         input_list.append(line_to_vec(input_file.readline(), d, params))
         output_list.append(line_to_vec(output_file.readline(), d, params))
+    return input_list, output_list
+
+def shuffle(input_list, output_list):
     z = zip(input_list, output_list)
     random.shuffle(z)
-    return zip(*z)
+    print type(z)
+    #actually tuples!
+    input_list, output_list = zip(*z)
+    input_list = list(input_list)
+    output_list = list(output_list)
+    return input_list, output_list
 
 #takes a line of text, returns an array of strings where ecah string is a word
 def tokenize(line):
@@ -127,6 +130,11 @@ def line_to_vec(sample, d, params):
         word_vectors.extend(d[word])
     return word_vectors
 
+def find_lines(file_name):
+    text_file = open(file_name, 'r')
+    temp_string = text_file.read()
+    return temp_string.count('\n')
+
 #create a vocabulary list from a file
 def find_vocab(file_name, SST, vocab=None, master_key=None):
     if vocab is None:
@@ -134,7 +142,7 @@ def find_vocab(file_name, SST, vocab=None, master_key=None):
     if master_key is None:
         master_key = {}
     text_file = open(file_name, 'r')
-    list_of_words = tokenize(clean_str(text_file.read()), SST=SST)
+    list_of_words = tokenize(clean_str(text_file.read(), SST=SST))
     for word in list_of_words:
         if word not in master_key and word not in vocab:
             vocab.append(word)
