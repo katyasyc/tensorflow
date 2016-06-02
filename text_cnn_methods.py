@@ -1,6 +1,7 @@
 import tensorflow as tf
 import sys, re
 import random
+import numpy as np
 
 #initializes weights, random with stddev of .1
 def weight_variable(shape):
@@ -61,14 +62,19 @@ def l2_normalize(W, L2_NORM_CONSTRAINT):
             tf.scalar_mul(L2_NORM_CONSTRAINT/l2_loss, W), 2))), W)
     return W
 
-def get_all(file_name, params, lines, d):
-    input_file = open(params['TRAIN_FILE_NAME'] + '.data', 'r')
-    output_file = open(params['TRAIN_FILE_NAME'] + '.labels', 'r')
+def get_all(file_name, lines, d, params):
+    input_file = open(file_name + '.data', 'r')
+    output_file = open(file_name + '.labels', 'r')
     input_list = []
     output_list = []
     for line in range(lines):
-        input_list.append(line_to_vec(input_file.readline(), d, params))
-        output_list.append(line_to_vec(output_file.readline(), d, params))
+        try: input_list.append(line_to_vec(input_file.readline(), d, params))
+        #debug code: fixed
+        except KeyError:
+            input_list.append([0] * 300)
+            params['key_errors'].append(clean_str(input_file.readline(), params['SST']))
+        #end debug code
+        output_list.append(one_hot(int(output_file.readline().rstrip()), params['CLASSES']))
     return input_list, output_list
 
 def shuffle(input_list, output_list):
@@ -124,7 +130,7 @@ def clean_str(string, TREC=False, SST=False):
 #takes a line of text, key with vocab indexed to vectors
 #returns word vectors concatenated into a list
 def line_to_vec(sample, d, params):
-    list_of_words = tokenize(clean_str(sample, params['SST']))
+    list_of_words = tokenize(clean_str(sample, SST = params['SST']))
     word_vectors = []
     for word in list_of_words:
         word_vectors.extend(d[word])
