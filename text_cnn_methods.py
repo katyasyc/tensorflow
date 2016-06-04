@@ -40,16 +40,16 @@ def one_hot(category, CLASSES):
     return one_hot
 
 #super buggy
-def pad(sample, params):
-    left = (params['MAX_LENGTH']  - len(sample)) / 2
+def pad(list_of_words, params):
+    left = (params['MAX_LENGTH']  - len(list_of_words)) / 2
     right = left
-    if (params['MAX_LENGTH'] - len(sample)) % 2 != 0:
+    if (params['MAX_LENGTH'] - len(list_of_words)) % 2 != 0:
         right += 1
     for i in range(left):
-        sample.insert(0, [0] * params['WORD_VECTOR_LENGTH'])
+        list_of_words.insert(0, '<PAD>')
     for i in range(right):
-        sample.append([0] * params['WORD_VECTOR_LENGTH'])
-    return sample
+        list_of_words.append('<PAD>')
+    return list_of_words
 
 #l2_loss = l2 loss (tf fn returns half of l2 loss w/o sqrt)
 #where Wi is each item in W, W = Wi/sqrt[sum([(Wi*constraint)/l2_loss]^2)]
@@ -100,21 +100,41 @@ def l2_normalize(W, L2_NORM_CONSTRAINT, sess):
     return W
 
 #get all examples from a file and return np arrays w/input and output
-def get_all(file_name, lines, d, params):
+def get_all(file_name, lines, params):
     input_file = open(file_name + '.data', 'r')
     output_file = open(file_name + '.labels', 'r')
     input_list = []
     output_list = []
     #change this code: we vectorize only as needed
     for line in range(lines):
-        try: input_list.append(line_to_vec(input_file.readline(), d, params))
-        #debug code: fixed
-        except KeyError:
-            params['key_errors'].append(clean_str(input_file.readline(), params['SST']))
-        #end debug code
+        input_list.append(pad(tokenize(clean_str(input_file.readline(), SST = params['SST'])), params))
         output_list.append(one_hot(int(output_file.readline().rstrip()), params['CLASSES']))
-        input_list[line] = pad(input_list[line], params)
-    return np.expand_dims(np.asarray(input_list), 2), np.asarray(output_list)
+    return input_list, output_list
+#takes a batch of text, key with vocab indexed to vectors
+#returns word vectors concatenated into a list
+def sub_vectors(input_list, d, params):
+    list_of_examples = []
+    for i in range(len(input_list)):
+        list_of_words = []
+        for j in range(params['MAX_LENGTH']):
+            list_of_numbers = []
+            for k in range(params['WORD_VECTOR_LENGTH']):
+                list_of_numbers.append(d[input_list[i][j]][k])
+            list_of_words.append(list_of_numbers)
+        list_of_examples.append(list_of_words)
+    return np.expand_dims(np.asarray(list_of_examples), 2)
+"""
+#takes a batch of text, key with vocab indexed to vectors
+#returns word vectors concatenated into a list
+def sub_vectors(input_list, d, params):
+    batch_x = np.empty([len(input_list), params['MAX_LENGTH'], params['WORD_VECTOR_LENGTH']], dtype = float)
+    for i in range(len(input_list)):
+        for j in range(params['MAX_LENGTH']):
+            for k in range(params['WORD_VECTOR_LENGTH']):
+                array_k = np.empty()
+                batch_x[i][j][k] = d[input_list[i][j]][k]
+    return np.expand_dims(np.asarray(batch_x), 2)
+"""
 
 #shuffle two numpy arrays in unison
 def shuffle_in_unison(a, b):
@@ -129,8 +149,8 @@ def shuffle(input_list, output_list):
     z = zip(input_list, output_list)
     random.shuffle(z)
     print type(z)
-    #actually tuples!
     input_list, output_list = zip(*z)
+    #convert tuples back into lists
     input_list = list(input_list)
     output_list = list(output_list)
     return input_list, output_list
@@ -176,14 +196,7 @@ def clean_str(string, TREC=False, SST=False):
     string = re.sub(r"\s{2,}", " ", string)
     return string.strip() if TREC else string.strip().lower()
 
-#takes a line of text, key with vocab indexed to vectors
-#returns word vectors concatenated into a list
-def line_to_vec(sample, d, params):
-    list_of_words = tokenize(clean_str(sample, SST = params['SST']))
-    word_vectors = []
-    for word in list_of_words:
-        word_vectors.append(d[word])
-    return word_vectors
+
 
 def find_lines(file_name):
     text_file = open(file_name, 'r')
@@ -191,13 +204,12 @@ def find_lines(file_name):
     return temp_string.count('\n')
 
 #create a vocabulary list from a file
-def find_vocab(file_name, SST, vocab=None, master_key=None):
+def find_vocab(list_of_sentences, vocab=None, master_key=None):
+    list_of_words = [word for sentence in list_of_sentences for word in sentence]
     if vocab is None:
         vocab = []
     if master_key is None:
         master_key = {}
-    text_file = open(file_name, 'r')
-    list_of_words = tokenize(clean_str(text_file.read(), SST=SST))
     for word in list_of_words:
         if word not in master_key and word not in vocab:
             vocab.append(word)
@@ -220,7 +232,10 @@ def initialize_vocab(vocab, word_vectors, master_key=None):
             master_key[vocab[vocab.index(line[0])]] = vector
             vocab.remove(line[0])
     for word in vocab:
-        master_key[word] = [0] * 300
+        master_key[word] = [0.0] * 300
+    #padding *must* be zeroed out
+    master_key['<PAD>'] = [0.0] * 300
+    master_key[''] = [0.0] * 300
     return master_key
 
 if __name__ == "__main__": main()
