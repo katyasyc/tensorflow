@@ -22,6 +22,8 @@ def define_nn(x, kernel_size, params, slices, weights, biases):
     #fix kernel_size
     W = weight_variable([kernel_size, 1, params['WORD_VECTOR_LENGTH'], params['FILTERS']])
     b = bias_variable([params['FILTERS']])
+    #integrate l2 loss
+    #W = calculate_l2(W, params)
     #convolve: each neuron iterates by 1 filter, 1 word
     conv = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="SAME")
     #apply bias and relu
@@ -51,9 +53,24 @@ def pad(list_of_words, params):
         list_of_words.append('<PAD>')
     return list_of_words
 
+def l2_normalize(W, params):
+    l2_loss = tf.cast(tf.scalar_mul(tf.convert_to_tensor(2.0), tf.nn.l2_loss(W)), tf.float32_ref)
+    W = tf.cond(tf.greater(l2_loss, params['L2_NORM_CONSTRAINT']), tf.scalar_mul(tf.cast(tf.rsqrt(tf.reduce_sum(tf.square(
+        tf.scalar_mul(l2_loss, W)))), tf.float32_ref), W), W)
+    return W
+
+def l2_normalize_old(W, params):
+    l2_loss = tf.scalar_mul(tf.convert_to_tensor(2.0), tf.nn.l2_loss(W), dtype = float32_ref)
+    if tf.equal(tf.greater(l2_loss, params['L2_NORM_CONSTRAINT']), tf.convert_to_tensor(True)):
+        params['changes'] += 1
+        W = tf.scalar_mul(tf.cast(tf.rsqrt(tf.reduce_sum(tf.square(
+            tf.scalar_mul(l2_loss, W)))), dtype = tf.float32_ref), W)
+    print 'changes' , params['changes']
+    return W
+
 #l2_loss = l2 loss (tf fn returns half of l2 loss w/o sqrt)
 #where Wi is each item in W, W = Wi/sqrt[sum([(Wi*constraint)/l2_loss]^2)]
-def l2_normalize(W, L2_NORM_CONSTRAINT, sess):
+def l2_defunct(W, L2_NORM_CONSTRAINT, sess):
     print 'w', W
     loss =tf.identity(tf.nn.l2_loss(W))
     print 'w2', W
@@ -91,7 +108,7 @@ def l2_normalize(W, L2_NORM_CONSTRAINT, sess):
         #I1 = tf.scalar_mul(T, W)
         I2 = tf.cast(tf.rsqrt(tf.reduce_sum(tf.square(
             I1))), dtype = tf.float32_ref)
-        W = tf.scalar_mul(I2, W)
+        W = tf.scalar_mul(I2,W)
 
         #scalar_tensor = tf.cast(tf.constant(L2_NORM_CONSTRAINT/l2_loss), dtype = float32_ref)
         #new_weights =
@@ -117,10 +134,7 @@ def sub_vectors(input_list, d, params):
     for i in range(len(input_list)):
         list_of_words = []
         for j in range(params['MAX_LENGTH']):
-            list_of_numbers = []
-            for k in range(params['WORD_VECTOR_LENGTH']):
-                list_of_numbers.append(d[input_list[i][j]][k])
-            list_of_words.append(list_of_numbers)
+            list_of_words.append(d[input_list[i][j]])
         list_of_examples.append(list_of_words)
     return np.expand_dims(np.asarray(list_of_examples), 2)
 """
@@ -216,11 +230,11 @@ def find_vocab(list_of_sentences, vocab=None, master_key=None):
     return vocab
 
 #initialize list of vocabulary with word2vec or zeroes
-def initialize_vocab(vocab, word_vectors, master_key=None):
+def initialize_vocab(vocab, params, master_key=None):
     print "vocab size: " + str(len(vocab))
     if master_key is None:
         master_key = {}
-    word2vec = open(word_vectors, 'r')
+    word2vec = open(params['WORD_VECS_FILE_NAME'], 'r')
     word2vec.readline()
     for i in range(3000000):   #number of words in word2vec
         line = tokenize(word2vec.readline().strip())
@@ -229,13 +243,16 @@ def initialize_vocab(vocab, word_vectors, master_key=None):
             vector = []
             for j in range(1, len(line)):
                 vector.append(float(line[j]))
-            master_key[vocab[vocab.index(line[0])]] = vector
+            master_key[line[0]] = np.asarray(vector)
             vocab.remove(line[0])
     for word in vocab:
-        master_key[word] = [0.0] * 300
+        master_key[word] = np.random.uniform(-0.25,0.25,params['WORD_VECTOR_LENGTH'])
     #padding *must* be zeroed out
-    master_key['<PAD>'] = [0.0] * 300
-    master_key[''] = [0.0] * 300
+    #specify dtype?
+    master_key['<PAD>'] = np.zeros([300])
+    #ideally eliminate
+    master_key[''] = np.zeros([300])
+    print len(master_key)
     return master_key
 
 if __name__ == "__main__": main()
