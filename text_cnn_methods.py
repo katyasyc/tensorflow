@@ -39,9 +39,9 @@ def define_nn(x, kernel_size, params, slices, weights, biases):
 def one_hot(category, CLASSES):
     one_hot = [0] * CLASSES
     one_hot[category] = 1
-    return one_hot
+    return np.asarray(one_hot)
 
-#super buggy
+#pads all sentences to same length
 def pad(list_of_words, params):
     left = (params['MAX_LENGTH']  - len(list_of_words)) / 2
     right = left
@@ -53,11 +53,25 @@ def pad(list_of_words, params):
         list_of_words.append('<PAD>')
     return list_of_words
 
-def l2_normalize(W, params):
+def l2_normalize(W, params, sess):
+    print tf.Print(W,W)
     l2_loss = tf.cast(tf.scalar_mul(tf.convert_to_tensor(2.0), tf.nn.l2_loss(W)), tf.float32_ref)
-    W = tf.cond(tf.greater(l2_loss, params['L2_NORM_CONSTRAINT']), tf.scalar_mul(tf.cast(tf.rsqrt(tf.reduce_sum(tf.square(
-        tf.scalar_mul(l2_loss, W)))), tf.float32_ref), W), W)
-    return W
+    greater = tf.cast(tf.greater(l2_loss, params['L2_NORM_CONSTRAINT']), tf.bool)
+    scalar_mul = tf.scalar_mul(l2_loss, W)
+    reduce_sum = tf.reduce_sum(tf.square(scalar_mul))
+    sqrt1 = tf.rsqrt(reduce_sum)
+    multiply = tf.scalar_mul(tf.cast(sqrt1, tf.float32_ref), W)
+
+    with sess.as_default():
+        if greater.eval():
+            return multiply
+        else:
+            return W
+    """
+    tuple1 = tf.tuple(greater, multiply)
+    Z = tf.case([tuple1, W])
+    return Z
+    """
 
 def l2_normalize_old(W, params):
     l2_loss = tf.scalar_mul(tf.convert_to_tensor(2.0), tf.nn.l2_loss(W), dtype = float32_ref)
@@ -66,54 +80,6 @@ def l2_normalize_old(W, params):
         W = tf.scalar_mul(tf.cast(tf.rsqrt(tf.reduce_sum(tf.square(
             tf.scalar_mul(l2_loss, W)))), dtype = tf.float32_ref), W)
     print 'changes' , params['changes']
-    return W
-
-#l2_loss = l2 loss (tf fn returns half of l2 loss w/o sqrt)
-#where Wi is each item in W, W = Wi/sqrt[sum([(Wi*constraint)/l2_loss]^2)]
-def l2_defunct(W, L2_NORM_CONSTRAINT, sess):
-    print 'w', W
-    loss =tf.identity(tf.nn.l2_loss(W))
-    print 'w2', W
-    print 'loss', loss
-    loss2 = tf.cast(loss, dtype = tf.float32)
-    print 'loss2', loss2
-    l2_loss = math.sqrt(2*(sess.run(loss2)))
-    """
-    if  l2_loss > L2_NORM_CONSTRAINT:
-
-        """
-    # if  l2_loss > L2_NORM_CONSTRAINT:
-    #     W = tf.scalar_mul(tf.rsqrt(tf.reduce_sum(tf.square(
-    #         tf.scalar_mul(tf.convert_to_tensor(L2_NORM_CONSTRAINT/l2_loss, as_ref = True),
-    #         tf.convert_to_tensor(W, as_ref = True)), tf.convert_to_tensor(2)))), W)
-    if  l2_loss > L2_NORM_CONSTRAINT:
-        #T = tf.Variable(tf.convert_to_tensor(, as_ref = True))
-        #print T
-        """
-        T = tf.Variable(L2_NORM_CONSTRAINT/l2_loss)
-        print T
-        F = tf.constant(2, dtype = tf.float32_ref)
-        print F
-        """
-        #working:
-        dummy = tf.constant(0.0)
-        T = tf.constant(L2_NORM_CONSTRAINT/l2_loss)
-        F = tf.add(dummy, T)
-        print F
-        W = tf.convert_to_tensor(W, as_ref = True)
-        G = tf.cast(F, dtype = tf.float32_ref)
-        I = tf.scalar_mul(G, W)
-        I1 = tf.cast(I, dtype = tf.float32_ref)
-        #print tf.convert_to_tensor(L2_NORM_CONSTRAINT/l2_loss)
-        #I1 = tf.scalar_mul(T, W)
-        I2 = tf.cast(tf.rsqrt(tf.reduce_sum(tf.square(
-            I1))), dtype = tf.float32_ref)
-        W = tf.scalar_mul(I2,W)
-
-        #scalar_tensor = tf.cast(tf.constant(L2_NORM_CONSTRAINT/l2_loss), dtype = float32_ref)
-        #new_weights =
-        #scalar_tensor_2 = tf.cast(tf.rsqrt(tf.reduce_sum(tf.square(I1))), dtype = float32_ref)
-
     return W
 
 #get all examples from a file and return np arrays w/input and output
@@ -137,18 +103,6 @@ def sub_vectors(input_list, d, params):
             list_of_words.append(d[input_list[i][j]])
         list_of_examples.append(list_of_words)
     return np.expand_dims(np.asarray(list_of_examples), 2)
-"""
-#takes a batch of text, key with vocab indexed to vectors
-#returns word vectors concatenated into a list
-def sub_vectors(input_list, d, params):
-    batch_x = np.empty([len(input_list), params['MAX_LENGTH'], params['WORD_VECTOR_LENGTH']], dtype = float)
-    for i in range(len(input_list)):
-        for j in range(params['MAX_LENGTH']):
-            for k in range(params['WORD_VECTOR_LENGTH']):
-                array_k = np.empty()
-                batch_x[i][j][k] = d[input_list[i][j]][k]
-    return np.expand_dims(np.asarray(batch_x), 2)
-"""
 
 #shuffle two numpy arrays in unison
 def shuffle_in_unison(a, b):
@@ -157,17 +111,6 @@ def shuffle_in_unison(a, b):
     np.random.set_state(rng_state)
     np.random.shuffle(b)
     return a, b
-
-#defunct
-def shuffle(input_list, output_list):
-    z = zip(input_list, output_list)
-    random.shuffle(z)
-    print type(z)
-    input_list, output_list = zip(*z)
-    #convert tuples back into lists
-    input_list = list(input_list)
-    output_list = list(output_list)
-    return input_list, output_list
 
 #takes a line of text, returns an array of strings where ecah string is a word
 def tokenize(line):
@@ -210,8 +153,6 @@ def clean_str(string, TREC=False, SST=False):
     string = re.sub(r"\s{2,}", " ", string)
     return string.strip() if TREC else string.strip().lower()
 
-
-
 def find_lines(file_name):
     text_file = open(file_name, 'r')
     temp_string = text_file.read()
@@ -228,10 +169,14 @@ def find_vocab(list_of_sentences, vocab=None, master_key=None):
         if word not in master_key and word not in vocab:
             vocab.append(word)
     return vocab
+#method to convert batch into list of tensors
+#50 examples as separate tensors, in a python list
+#pack together
+#foldl to sum gradient??
+#call optimizer
 
-#initialize list of vocabulary with word2vec or zeroes
+#initialize dict of vocabulary with word2vec or random numbers
 def initialize_vocab(vocab, params, master_key=None):
-    print "vocab size: " + str(len(vocab))
     if master_key is None:
         master_key = {}
     word2vec = open(params['WORD_VECS_FILE_NAME'], 'r')
@@ -252,7 +197,12 @@ def initialize_vocab(vocab, params, master_key=None):
     master_key['<PAD>'] = np.zeros([300])
     #ideally eliminate
     master_key[''] = np.zeros([300])
-    print len(master_key)
+    master_key['P'] = np.zeros([300])
+    master_key['A'] = np.zeros([300])
+    master_key['D'] = np.zeros([300])
+    master_key['<'] = np.zeros([300])
+    master_key['>'] = np.zeros([300])
+
     return master_key
 
 if __name__ == "__main__": main()
