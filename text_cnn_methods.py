@@ -11,8 +11,8 @@ def weight_variable(shape):
 
 #initializes biases, all at .1
 def bias_variable(shape):
-  initial = tf.constant(0.1, shape=shape)
-  return tf.Variable(initial)
+      initial = tf.constant(0.1, shape=shape)
+      return tf.Variable(initial)
 
 #defines the first two layers of our neural network
 def define_nn(x, kernel_size, params, slices, weights, biases):
@@ -190,6 +190,7 @@ def initialize_vocab(vocab, params, master_key=None):
                 vector.append(float(line[j]))
             master_key[line[0]] = np.asarray(vector)
             vocab.remove(line[0])
+    word2vec.close()
     for word in vocab:
         master_key[word] = np.random.uniform(-0.25,0.25,params['WORD_VECTOR_LENGTH'])
     #padding *must* be zeroed out

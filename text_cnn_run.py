@@ -38,10 +38,9 @@ def define_globals(args):
 
         'TRAINING_STEPS' : 20000,
         'BATCH_SIZE' : 50,
-        'EPOCHS' : 25,
+        'EPOCHS' : args[1],
 
         'LEARNING_RATE' : args[0],
-        'Adagrad' : args[1],
         'TRAIN_FILE_NAME' : 'train-short',
         'DEV_FILE_NAME' : 'dev-short',
         'WORD_VECS_FILE_NAME' : 'output-short.txt',
@@ -56,11 +55,6 @@ def define_globals(args):
         #debug
         'key_errors' : [],
         'changes' : 0}
-    if params['Adagrad']:
-        params['OUTPUT_FILE_NAME'] = 'Adagrad'
-    else:
-        params['OUTPUT_FILE_NAME'] = 'Adam'
-    params['OUTPUT_FILE_NAME'] += str(params['LEARNING_RATE'])
     return params
 
 
@@ -123,19 +117,26 @@ def sum_prob(x, y_,set_x, set_y, keys, params, correct_prediction, accuracy, dro
 
 def main(argv):
     try:
-        opts, args = getopt.getopt(argv, "slf")
+        opts, args = getopt.getopt(argv, "slfa")
     except getopt.GetoptError:
         print('Unable to run; GetoptError')
         sys.exit(2)
     try:
         args[0] = float(args[0])
-        args[1] = bool(args[1])
+        args[1] = int(args[1])
     except SyntaxError:
         print args[0], "type", type(args[0])
-        print args[1], "type", type(args[1])
         print('Unable to run; command line input does not match')
         sys.exit(2)
     params = define_globals(args)
+    for opt in opts:
+        if opt[0] == ("-a"):
+            params['Adagrad'] = True
+            params['OUTPUT_FILE_NAME'] = 'Adagrad'
+        else:
+            params['Adagrad'] = False
+            params['OUTPUT_FILE_NAME'] = 'Adam'
+        params['OUTPUT_FILE_NAME'] += str(params['LEARNING_RATE'])
     for opt in opts:
         if opt[0] == ("-s"):
             params['TRAIN_FILE_NAME'] = 'test-eshort'
@@ -149,12 +150,14 @@ def main(argv):
             params['DEV_FILE_NAME'] = 'dev'
             params['WORD_VECS_FILE_NAME'] = 'output.txt'
             params['OUTPUT_FILE_NAME'] += 'f'
-    output = open(params['OUTPUT_FILE_NAME'] + '.txt', 'w')
+    params['OUTPUT_FILE_NAME'] += ',' + str(params['EPOCHS']) + ',' + str(argv[2]) + ',' + str(argv[3])
+    output = open(params['OUTPUT_FILE_NAME'] + '.txt', 'a', 0)
     if params['Adagrad']:
         output.write("Running Adagrad with a learning rate of ")
     else:
-        output.write("Running Adagrad with a learning rate of")
+        output.write("Running Adam with a learning rate of ")
     output.write(str(params['LEARNING_RATE']) + ' and ' + str(params['EPOCHS']) + ' epochs\n')
+    output.write(str(argv[2]) + ', ' + str(argv[3]) + '\n')
     output.write("Using files: " + str(params['TRAIN_FILE_NAME']) + ', '
         + str(params['DEV_FILE_NAME']) + ', '
         + str(params['WORD_VECS_FILE_NAME']) + '\n')
@@ -224,9 +227,9 @@ def main(argv):
     #train_step = tf.train.AdadeltaOptimizer(use_locking = True).minimize(cross_entropy)
     #train_step = tf.train.GradientDescentOptimizer(.5).minimize(cross_entropy)
     if params['Adagrad']:
-        train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
+        train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE'], initial_accumulator_value=float(argv[2])).minimize(cross_entropy)
     else:
-        train_step = tf.train.AdamOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
+        train_step = tf.train.AdamOptimizer(params['LEARNING_RATE'], beta1 = float(argv[2]), beta2 = float(argv[3])).minimize(cross_entropy)
     #define accuracy for evaluation
     correct_prediction = tf.equal(tf.argmax(y_conv,1), tf.argmax(y_,1))
     accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
@@ -237,7 +240,7 @@ def main(argv):
     #run session
     output.write( 'Initializing session...\n\n')
     sess = tf.Session(config=tf.ConfigProto(inter_op_parallelism_threads=1,
-                      intra_op_parallelism_threads=100, use_per_session_threads=True))
+                      intra_op_parallelism_threads=2, use_per_session_threads=True))
     sess.run(tf.initialize_all_variables())
     output.write( 'Running session...\n\n')
 
@@ -262,19 +265,15 @@ def main(argv):
             calculated_entropy = tf.foldl(cross_entropy, batch_pack)
             train_step.run
             """
-            #apply l2 normalization to weights and biases
+            #apply l2 clipping to weights and biases
             with sess.as_default():
-                # slice1 = tf.slice(W_fc, [0,0], [2,2])
-                # print "slice"
-                # print slice1.eval()
-                # tf.Print(slice1, [slice1])
-
-                W_fc = tf.clip_by_average_norm(W_fc, params['L2_NORM_CONSTRAINT'])
                 for W in weights:
                     W = tf.clip_by_average_norm(W, params['L2_NORM_CONSTRAINT'])
                 for b in biases:
                     b = tf.clip_by_average_norm(b, params['L2_NORM_CONSTRAINT'])
+                W_fc = tf.clip_by_average_norm(W_fc, params['L2_NORM_CONSTRAINT'])
                 b_fc = tf.clip_by_average_norm(b_fc, params['L2_NORM_CONSTRAINT'])
+
         output.write("epoch %d, training accuracy %g \n"%(i, accuracy.eval(feed_dict={x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess)))
 
         # cross_entropy_accuracy = cross_entropy.eval(feed_dict={
@@ -300,4 +299,5 @@ def main(argv):
         print("dev set accuracy %g \n"%sum_prob(x, y_, dev_x,dev_y, keys, params, correct_prediction, accuracy, dropout, sess))
     #%accuracy.eval(feed_dict={x: sub_vectors(dev_x, keys, params), y_: dev_y, dropout: 1.0}, session = sess))
 """
+    output.close()
 if __name__ == "__main__": main(sys.argv[1:])
