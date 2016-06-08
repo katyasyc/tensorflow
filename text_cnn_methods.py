@@ -3,6 +3,7 @@ import sys, re
 import random
 import numpy as np
 import math
+import os.path
 
 #initializes weights, random with stddev of .1
 def weight_variable(shape):
@@ -83,12 +84,11 @@ def l2_normalize_old(W, params):
     return W
 
 #get all examples from a file and return np arrays w/input and output
-def get_all(file_name, lines, params):
-    input_file = open(file_name + '.data', 'r')
-    output_file = open(file_name + '.labels', 'r')
+def get_all(directory, file_name, lines, params):
+    input_file = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, file_name) + '.data', 'r')
+    output_file = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, file_name) + '.labels', 'r')
     input_list = []
     output_list = []
-    #change this code: we vectorize only as needed
     for line in range(lines):
         input_list.append(pad(tokenize(clean_str(input_file.readline(), SST = params['SST'])), params))
         output_list.append(one_hot(int(output_file.readline().rstrip()), params['CLASSES']))

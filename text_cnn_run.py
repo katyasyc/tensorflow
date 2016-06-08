@@ -36,15 +36,15 @@ def define_globals(args):
         'L2_NORM_CONSTRAINT' : 3.0,
         'TRAIN_DROPOUT' : 0.5,
 
-        'TRAINING_STEPS' : 20000,
         'BATCH_SIZE' : 50,
-        'EPOCHS' : args[1],
+        'EPOCHS' : args[2],
 
-        'LEARNING_RATE' : args[0],
-        'TRAIN_FILE_NAME' : 'train-short',
-        'DEV_FILE_NAME' : 'dev-short',
-        'WORD_VECS_FILE_NAME' : 'output-short.txt',
-        'OUTPUT_FILE_NAME' : '',
+        'Adagrad' : False,
+        'LEARNING_RATE' : args[1],
+        'TRAIN_FILE_NAME' : 'train',
+        'DEV_FILE_NAME' : 'dev',
+        'WORD_VECS_FILE_NAME' : 'output.txt',
+        'OUTPUT_FILE_NAME' : args[0],
         'SST' : True,
         'DEV' : True,
 
@@ -122,38 +122,36 @@ def main(argv):
         print('Unable to run; GetoptError')
         sys.exit(2)
     try:
-        args[0] = float(args[0])
-        args[1] = int(args[1])
+        args[1] = float(args[1])
+        args[2] = int(args[2])
     except SyntaxError:
-        print args[0], "type", type(args[0])
+        print args[1], "type", type(args[1])
         print('Unable to run; command line input does not match')
         sys.exit(2)
     params = define_globals(args)
+    if args[0] == 'sst1':
+        params['CLASSES'] = 5
     for opt in opts:
         if opt[0] == ("-a"):
             params['Adagrad'] = True
-            params['OUTPUT_FILE_NAME'] = 'Adagrad'
+            params['OUTPUT_FILE_NAME'] += 'Adagrad'
+            break
         else:
             params['Adagrad'] = False
-            params['OUTPUT_FILE_NAME'] = 'Adam'
+            params['OUTPUT_FILE_NAME'] += 'Adam'
         params['OUTPUT_FILE_NAME'] += str(params['LEARNING_RATE'])
     for opt in opts:
         if opt[0] == ("-s"):
-            params['TRAIN_FILE_NAME'] = 'test-eshort'
-            params['DEV_FILE_NAME'] = 'dev-eshort'
+            params['TRAIN_FILE_NAME'] = 'test-short'
+            params['DEV_FILE_NAME'] = 'dev-short'
+            params['WORD_VECS_FILE_NAME'] = 'output-short.txt'
             params['OUTPUT_FILE_NAME'] += 's'
-        elif opt[0] == ("-l"):
-            params['TRAIN_FILE_NAME'] = 'train-longer'
-            params['OUTPUT_FILE_NAME'] += 'l'
-        elif opt[0] == ("-f"):
-            params['TRAIN_FILE_NAME'] = 'train'
-            params['DEV_FILE_NAME'] = 'dev'
-            params['WORD_VECS_FILE_NAME'] = 'output.txt'
-            params['OUTPUT_FILE_NAME'] += 'f'
-    params['OUTPUT_FILE_NAME'] += ',' + str(params['EPOCHS']) + ',' + str(argv[2]) + ',' + str(argv[3])
+    params['OUTPUT_FILE_NAME'] += ',' + str(params['EPOCHS']) + ',' + str(args[3])
     output = open(params['OUTPUT_FILE_NAME'] + '.txt', 'a', 0)
     if params['Adagrad']:
         output.write("Running Adagrad with a learning rate of ")
+    # elif params['Momentum']:
+    #     output.write("Running Momentum with a learning rate of ")
     else:
         output.write("Running Adam with a learning rate of ")
     output.write(str(params['LEARNING_RATE']) + ' and ' + str(params['EPOCHS']) + ' epochs\n')
@@ -166,8 +164,8 @@ def main(argv):
     dev_size = find_lines(params['DEV_FILE_NAME'] + '.labels')
 
     #create training and eval sets
-    dev_x, dev_y = get_all(params['DEV_FILE_NAME'], dev_size, params)
-    train_x, train_y = get_all(params['TRAIN_FILE_NAME'], train_size, params)
+    dev_x, dev_y = get_all(args[0], params['DEV_FILE_NAME'], dev_size, params)
+    train_x, train_y = get_all(args[0], params['TRAIN_FILE_NAME'], train_size, params)
 
     vocab = find_vocab(train_x)
     vocab = find_vocab(dev_x,  vocab=vocab)
@@ -227,9 +225,13 @@ def main(argv):
     #train_step = tf.train.AdadeltaOptimizer(use_locking = True).minimize(cross_entropy)
     #train_step = tf.train.GradientDescentOptimizer(.5).minimize(cross_entropy)
     if params['Adagrad']:
-        train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE'], initial_accumulator_value=float(argv[2])).minimize(cross_entropy)
+        train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
+        #train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE'], initial_accumulator_value=float(argv[2])).minimize(cross_entropy)
+    # elif params ['Momentum']:
+    #     train_step = tf.train.MomentumOptimizer(params['LEARNING_RATE'], momentum=float(argv[2])).minimize(cross_entropy)
     else:
-        train_step = tf.train.AdamOptimizer(params['LEARNING_RATE'], beta1 = float(argv[2]), beta2 = float(argv[3])).minimize(cross_entropy)
+        train_step = tf.train.AdamOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
+        #train_step = tf.train.AdamOptimizer(params['LEARNING_RATE'], beta1 = float(argv[2]), beta2 = float(argv[3])).minimize(cross_entropy)
     #define accuracy for evaluation
     correct_prediction = tf.equal(tf.argmax(y_conv,1), tf.argmax(y_,1))
     accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
@@ -240,7 +242,7 @@ def main(argv):
     #run session
     output.write( 'Initializing session...\n\n')
     sess = tf.Session(config=tf.ConfigProto(inter_op_parallelism_threads=1,
-                      intra_op_parallelism_threads=2, use_per_session_threads=True))
+                      intra_op_parallelism_threads=1, use_per_session_threads=True))
     sess.run(tf.initialize_all_variables())
     output.write( 'Running session...\n\n')
 
