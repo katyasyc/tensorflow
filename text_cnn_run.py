@@ -4,18 +4,12 @@
 # randomly init word vectors
 # efficiency w/virtual memory: currently uses 11G for full run
 # make adadelta work
-# make l2 work
 # look up adadelta source code
 # look up minibatch handling
 # check to see if l2 reg is inclusive or exclusive
 # specify batch size, squeeze dev/train totals to fit
 # use Higher Order Operations/TensorArrays
 
-#to do:
-#bash for loops
-#google python import large FILTERS
-#run multiple parameters for adagrad and adam
-#redirect input to file
 
 import tensorflow as tf
 import random
@@ -30,7 +24,7 @@ def define_globals(args):
     params = {'WORD_VECTOR_LENGTH' : 300,
         'FILTERS' : 100,
         'KERNEL_SIZES' : [3,4,5],
-        'CLASSES' : 2,
+        'CLASSES' : args[3],
         'MAX_LENGTH' : 59,
 
         'L2_NORM_CONSTRAINT' : 3.0,
@@ -136,17 +130,16 @@ def main(argv):
             params['Adagrad'] = True
             params['OUTPUT_FILE_NAME'] += 'Adagrad'
             break
-        else:
-            params['Adagrad'] = False
-            params['OUTPUT_FILE_NAME'] += 'Adam'
-        params['OUTPUT_FILE_NAME'] += str(params['LEARNING_RATE'])
+    if params['Adagrad'] == False:
+        params['OUTPUT_FILE_NAME'] += 'Adam'
+    params['OUTPUT_FILE_NAME'] += str(params['LEARNING_RATE'])
     for opt in opts:
         if opt[0] == ("-s"):
             params['TRAIN_FILE_NAME'] = 'test-short'
             params['DEV_FILE_NAME'] = 'dev-short'
             params['WORD_VECS_FILE_NAME'] = 'output-short.txt'
             params['OUTPUT_FILE_NAME'] += 's'
-    params['OUTPUT_FILE_NAME'] += ',' + str(params['EPOCHS']) + ',' + str(args[3])
+    params['OUTPUT_FILE_NAME'] += ',' + str(params['EPOCHS']) + ',' + str(args[4])
     output = open(params['OUTPUT_FILE_NAME'] + '.txt', 'a', 0)
     if params['Adagrad']:
         output.write("Running Adagrad with a learning rate of ")
@@ -227,8 +220,6 @@ def main(argv):
     if params['Adagrad']:
         train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
         #train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE'], initial_accumulator_value=float(argv[2])).minimize(cross_entropy)
-    # elif params ['Momentum']:
-    #     train_step = tf.train.MomentumOptimizer(params['LEARNING_RATE'], momentum=float(argv[2])).minimize(cross_entropy)
     else:
         train_step = tf.train.AdamOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
         #train_step = tf.train.AdamOptimizer(params['LEARNING_RATE'], beta1 = float(argv[2]), beta2 = float(argv[3])).minimize(cross_entropy)
@@ -242,7 +233,7 @@ def main(argv):
     #run session
     output.write( 'Initializing session...\n\n')
     sess = tf.Session(config=tf.ConfigProto(inter_op_parallelism_threads=1,
-                      intra_op_parallelism_threads=1, use_per_session_threads=True))
+                      intra_op_parallelism_threads=3, use_per_session_threads=True))
     sess.run(tf.initialize_all_variables())
     output.write( 'Running session...\n\n')
 
@@ -250,6 +241,7 @@ def main(argv):
     train_accuracy = accuracy.eval(feed_dict={
         x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess)
     """
+    best_dev_accuracy = 0
     output.write("initial accuracy %g \n"%accuracy.eval(feed_dict={x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess))
     for i in range(params['EPOCHS']):
         params['epoch'] = i + 1
@@ -262,11 +254,6 @@ def main(argv):
             train_step.run(feed_dict={x: batch_x, y_: batch_y, dropout: params['TRAIN_DROPOUT']}, session = sess)
             #train_step.run(feed_dict={x: batch_x, y_: batch_y}, session = sess)
 
-            """
-            batch_pack = tf.pack(batch_x)
-            calculated_entropy = tf.foldl(cross_entropy, batch_pack)
-            train_step.run
-            """
             #apply l2 clipping to weights and biases
             with sess.as_default():
                 for W in weights:
@@ -283,23 +270,14 @@ def main(argv):
         # print("epoch %d, softmax error %g"%(i, cross_entropy_accuracy))
 
         #prints accuracy for dev set every epoch, DEV is a hyperparameter boolean
+        dev_accuracy = accuracy.eval(feed_dict={x: sub_vectors(dev_x, keys, params), y_: dev_y, dropout: 1.0}, session = sess)
+        output.write("dev set accuracy %g \n"%dev_accuracy)
+        if dev_accuracy > best_dev_accuracy:
+            #save model
+            best_dev_accuracy = dev_accuracy
+        if dev_accuracy < best_dev_accuracy - .02:
+            #early stop if accuracy drops significantly
+            break
 
-        if params['DEV']:
-            output.write("dev set accuracy %g \n"%accuracy.eval(feed_dict={x: sub_vectors(dev_x, keys, params), y_: dev_y, dropout: 1.0}, session = sess))
-        """
-            params['tensorflow_batch_size'] = dev_x.shape[0]
-            print "dev_x" , dev_x.shape
-            print params['tensorflow_batch_size']
-            print("dev set accuracy %g \n"%accuracy.eval(feed_dict={
-                x: sub_vectors(dev_x, keys, params),
-                y_: dev_y,
-                dropout: 1.0},
-                session = sess))
-
-    #print dev accuracy of results
-    if params['DEV']:
-        print("dev set accuracy %g \n"%sum_prob(x, y_, dev_x,dev_y, keys, params, correct_prediction, accuracy, dropout, sess))
-    #%accuracy.eval(feed_dict={x: sub_vectors(dev_x, keys, params), y_: dev_y, dropout: 1.0}, session = sess))
-"""
     output.close()
 if __name__ == "__main__": main(sys.argv[1:])

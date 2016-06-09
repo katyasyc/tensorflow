@@ -17,19 +17,13 @@ def bias_variable(shape):
 
 #defines the first two layers of our neural network
 def define_nn(x, kernel_size, params, slices, weights, biases):
-    #define weights and biases, make sure we can specify to normalize later
-    #correct line: getting error
-    #2nd dimension should be "None"
-    #fix kernel_size
     W = weight_variable([kernel_size, 1, params['WORD_VECTOR_LENGTH'], params['FILTERS']])
     b = bias_variable([params['FILTERS']])
-    #integrate l2 loss
-    #W = calculate_l2(W, params)
     #convolve: each neuron iterates by 1 filter, 1 word
     conv = tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding="SAME")
     #apply bias and relu
     relu = tf.nn.relu(tf.nn.bias_add(conv, b))
-    #max pool; each neuron sees 1 filter and returns max over l
+    #max pool; each neuron sees 1 filter and returns max over a sentence
     pooled = tf.nn.max_pool(relu, ksize=[1, params['MAX_LENGTH'], 1, 1],
         strides=[1, params['MAX_LENGTH'], 1, 1], padding='SAME')
     slices.insert(len(slices), pooled)
@@ -54,35 +48,6 @@ def pad(list_of_words, params):
         list_of_words.append('<PAD>')
     return list_of_words
 
-def l2_normalize(W, params, sess):
-    print tf.Print(W,W)
-    l2_loss = tf.cast(tf.scalar_mul(tf.convert_to_tensor(2.0), tf.nn.l2_loss(W)), tf.float32_ref)
-    greater = tf.cast(tf.greater(l2_loss, params['L2_NORM_CONSTRAINT']), tf.bool)
-    scalar_mul = tf.scalar_mul(l2_loss, W)
-    reduce_sum = tf.reduce_sum(tf.square(scalar_mul))
-    sqrt1 = tf.rsqrt(reduce_sum)
-    multiply = tf.scalar_mul(tf.cast(sqrt1, tf.float32_ref), W)
-
-    with sess.as_default():
-        if greater.eval():
-            return multiply
-        else:
-            return W
-    """
-    tuple1 = tf.tuple(greater, multiply)
-    Z = tf.case([tuple1, W])
-    return Z
-    """
-
-def l2_normalize_old(W, params):
-    l2_loss = tf.scalar_mul(tf.convert_to_tensor(2.0), tf.nn.l2_loss(W), dtype = float32_ref)
-    if tf.equal(tf.greater(l2_loss, params['L2_NORM_CONSTRAINT']), tf.convert_to_tensor(True)):
-        params['changes'] += 1
-        W = tf.scalar_mul(tf.cast(tf.rsqrt(tf.reduce_sum(tf.square(
-            tf.scalar_mul(l2_loss, W)))), dtype = tf.float32_ref), W)
-    print 'changes' , params['changes']
-    return W
-
 #get all examples from a file and return np arrays w/input and output
 def get_all(directory, file_name, lines, params):
     input_file = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, file_name) + '.data', 'r')
@@ -93,6 +58,7 @@ def get_all(directory, file_name, lines, params):
         input_list.append(pad(tokenize(clean_str(input_file.readline(), SST = params['SST'])), params))
         output_list.append(one_hot(int(output_file.readline().rstrip()), params['CLASSES']))
     return input_list, output_list
+
 #takes a batch of text, key with vocab indexed to vectors
 #returns word vectors concatenated into a list
 def sub_vectors(input_list, d, params):
@@ -169,11 +135,6 @@ def find_vocab(list_of_sentences, vocab=None, master_key=None):
         if word not in master_key and word not in vocab:
             vocab.append(word)
     return vocab
-#method to convert batch into list of tensors
-#50 examples as separate tensors, in a python list
-#pack together
-#foldl to sum gradient??
-#call optimizer
 
 #initialize dict of vocabulary with word2vec or random numbers
 def initialize_vocab(vocab, params, master_key=None):
