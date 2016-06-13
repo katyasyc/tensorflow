@@ -12,7 +12,7 @@ def weight_variable(shape):
 
 #initializes biases, all at .1
 def bias_variable(shape):
-      initial = tf.constant(0.1, shape=shape)
+      initial = tf.zeros(shape=shape)
       return tf.Variable(initial)
 
 #defines the first two layers of our neural network
@@ -100,6 +100,9 @@ def clean_str(string, TREC=False, SST=False):
         string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)
         string = re.sub(r"\s{2,}", " ", string)
         return string.strip().lower()
+    if ICMB == True:
+        string = string.replace('<br /><br />', ' ')
+        string = re.sub(r"-", " - ", string)
     """
     Tokenization/string cleaning for all datasets except for SST.
     Every dataset is lower cased except for TREC
