@@ -15,12 +15,20 @@
 #minor changes:
 #shuffled batches each epoch
 
+#todo:
+#don't tokenize
+#fit on docs (training set only!)
+#transform on words--or straight into parallel dict token-weight
+#update w2v key from that
+#do we multiply by weight each time, or just init with tfidf weightings??
+
 #program expects:
     # flags: -a for Adagrad, -s for short (test run)
     # argv[1] directory with train.data, dev.data, train.labels, dev.labels in SST format
     # argv[2] learning rate
     # argv[3] number of epochs
-    # argv[4] identifier tag (appended to filename to distinguish multiple runs)
+    # argv[4] tfidf ('True' or 'False')
+    # argv[5] identifier tag (appended to filename to distinguish multiple runs)
 
 #outputs in file named
     # directory, Optimizer name, number of epochs, identifier .txt
@@ -54,8 +62,8 @@ def define_globals(args):
 
         'Adagrad' : False,
         'LEARNING_RATE' : args[1],
-        'USE_TFIDF' : True,
-        'USE_WORD_VECS' : True,
+        'USE_TFIDF' : False,
+        'USE_WORD_VECS' : False,
         'TRAIN_FILE_NAME' : 'train',
         'DEV_FILE_NAME' : 'dev',
         'WORD_VECS_FILE_NAME' : 'output.txt',
@@ -76,7 +84,7 @@ def define_globals(args):
 
 def analyze_argv(argv):
     try:
-        opts, args = getopt.getopt(argv, "slfa")
+        opts, args = getopt.getopt(argv, "wta")
     except getopt.GetoptError:
         print('Unable to run; GetoptError')
         sys.exit(2)
@@ -99,24 +107,27 @@ def analyze_argv(argv):
         params['OUTPUT_FILE_NAME'] += 'Adam'
     params['OUTPUT_FILE_NAME'] += str(params['LEARNING_RATE'])
     for opt in opts:
-        if opt[0] == ("-s"):
-            params['TRAIN_FILE_NAME'] = 'test-short'
-            params['DEV_FILE_NAME'] = 'dev-short'
-            params['WORD_VECS_FILE_NAME'] = 'output-short.txt'
-            params['OUTPUT_FILE_NAME'] += 's'
+        if opt[0] == ('-w'):
+            params['USE_WORD_VECS'] = True
+        if opt[0] == ('-t'):
+            params['USE_TFIDF'] = True
     return args, params
 
 def initial_print_statements(params, args):
-    params['OUTPUT_FILE_NAME'] += ',' + str(params['EPOCHS']) + ',' + args[3]
+    params['OUTPUT_FILE_NAME'] += ',' + str(params['EPOCHS'])
+    if params['USE_TFIDF']:
+        params['OUTPUT_FILE_NAME'] += 'tfidf'
+    params['OUTPUT_FILE_NAME'] += ','
+    if params['USE_WORD_VECS']:
+        params['OUTPUT_FILE_NAME'] += 'word2vec'
+    params['OUTPUT_FILE_NAME'] += args[3]
     output = open(params['OUTPUT_FILE_NAME'] + '.txt', 'a', 0)
     if params['Adagrad']:
-        output.write("Running Adagrad with a learning rate of ")
+        output.write("Running Adagrad on " + args[0] + " with a learning rate of ")
     else:
-        output.write("Running Adam with a learning rate of ")
+        output.write("Running Adam on " + args[0] + " with a learning rate of ")
     output.write(str(params['LEARNING_RATE']) + ' and ' + str(params['EPOCHS']) + ' epochs\n')
-    output.write("Using files: " + str(params['TRAIN_FILE_NAME']) + ', '
-        + str(params['DEV_FILE_NAME']) + ', '
-        + str(params['WORD_VECS_FILE_NAME']) + '\n')
+    return output
 
 def sum_prob(x, y_,set_x, set_y, keys, params, correct_prediction, accuracy, dropout, sess):
         set_x_temp = set_x
@@ -140,18 +151,17 @@ def sum_prob(x, y_,set_x, set_y, keys, params, correct_prediction, accuracy, dro
         return examples_correct*50/set_y.shape[0]
 
 #convert data for feeding into placeholders
-def feed(input_x_tfidf, input_x_words, keys, params):
+def feed(input_tfidf, input_x, keys, params):
     if params['USE_TFIDF'] == False:
-        return sub_vectors(input_x_words, keys, params)
+        return np.expand_dims(sub_vectors(input_x, keys, params), 2)
     elif params['USE_WORD_VECS'] == True:
-        vecs = sub_vectors(input_x_words, keys, params)
+        vecs = sub_vectors(input_x, keys, params)
         for example_index in range(vecs.shape[0]):
             for word_index in range(params['MAX_LENGTH']):
-                #fix
-                scalar = input_x_tfidf[example_index][word_index]
+                scalar = input_tfidf[example_index][word_index]
                 for number_index in range(params['WORD_VECTOR_LENGTH']):
                     vecs[example_index][word_index][number_index] = scalar * vecs[example_index][word_index][number_index]
-        return vecs
+        return np.expand_dims(vecs, 2)
     else:
         indices = []
         values = []
@@ -165,10 +175,17 @@ def feed(input_x_tfidf, input_x_words, keys, params):
         shape = np.array([input_x.shape[0], input_x.shape[1], len(vocab)])
         return tf.SparseTensorValue(np.asarray(indices), np.asarray(values), shape)
 
+def flat_vectorize(input_x, input_x_str, vocab, params):
+    vectorizer = TfidfVectorizer(vocabulary = vocab)
+    input_vector = input_x.flatten().tolist()
+    input_tfidf_sparse = coo_matrix(vectorizer.fit_transform(input_vector))
+    input_tfidf_maxes = input_tfidf_sparse.max(1).toarray()
+    return input_tfidf_maxes.reshape((input_x.shape[0], params['MAX_LENGTH']))
+
 def main(argv):
     args, params = analyze_argv(argv)
 
-    initial_print_statements(params, args)
+    output = initial_print_statements(params, args)
 
     train_x, train_y = get_all(args[0], params['TRAIN_FILE_NAME'], params)
     dev_x, dev_y = get_all(args[0], params['DEV_FILE_NAME'], params)
@@ -178,57 +195,35 @@ def main(argv):
     train_x = np.asarray(train_x)
     dev_y = np.asarray(dev_y)
     train_y = np.asarray(train_y)
-
-
+    keys = initialize_vocab(vocab, params)
     if params['USE_TFIDF'] == True:
-        output.write('Initializing tfidf arrays: train...')
-        keys = {}
-        vectorizer = TfidfVectorizer(vocabulary = vocab)
-        new_train_x = np.reshape(train_x, (1, train_x.shape[0] * params['MAX_LENGTH'])).tolist()
-        str_train_x = ''
-        for word in new_train_x:
-            str_train_x += str(word) + ' '
-        new_train_x = csc_matrix(vectorizer.fit_transform(str_train_x))
-        new_train_x = new_train_x.toarray()
-        new_train_x = np.reshape(new_train_x, (train_x.shape[0], params['MAX_LENGTH'], len(vocab)))
-        if params['USE_WORD_VECS'] == True:
-            for sentence in train_x:
-                maxes = []
-                sentence = csc_matrix(vectorizer.fit_transform(sentence))
-                for index in range(params['MAX_LENGTH']):
-                    print sentence.getcol(index)
-                    print (sentence.getcol(index)).max()
-                    maxes.append((sentence.getcol(index)).max())
-
-                new_train_x.append(maxes)
+        train_x_str = get_strings(args[0], params['TRAIN_FILE_NAME'], params)
+        idf_vectorizer = TfidfVectorizer(vocabulary=vocab).fit(train_x_str)
+        average_weight = np.mean(idf_vectorizer.idf_)
+        idf_array = np.stack((np.asarray(vocab), idf_vectorizer.idf_), 1)
+        for i in range(idf_array.shape[0]):
+            keys[idf_array[i][0]] = np.multiply(float(idf_array[i][1]), keys[idf_array[i][0]])
+        # print csr_matrix(idf_vectorizer.transform(vocab)).max(0)
+        # word_vec_weights = np.asarray(idf_vectorizer.transform(vocab).max(1))
+        # print word_vec_weights.shape
         # else:
+        #        keys = {}
         #     for sentence in train_x:
         #         sentence = dok_matrix(vectorizer.fit_transform(sentence)).items()
         #         new_train_x.append(sentence)
-        train_x_tfidf = np.asarray(new_train_x)
-        print train_x_tfidf.shape
-        print train_x_tfidf
+        #           train_x_tfidf = np.asarray(new_train_x)
+        # print train_x_tfidf.shape
+        # print train_x_tfidf
         # train_x = np.expand_dims(train_x, axis=2)
-        output.write('  done. Dev...')
 
-        new_dev_x = []
-        for sentence in dev_x:
-            sentence = dok_matrix(vectorizer.fit_transform(sentence)).items()
-            new_dev_x.append(sentence)
-        dev_x_tfidf = np.asarray(new_dev_x)
-        # dev_x = np.expand_dims(dev_x, axis=2)
-        output.write('  done.\n\n')
-        dev_x_words = np.asarray([0])
-        train_x_words = np.asarray([0])
-    else:
-        dev_x_tfidf = np.asarray([0])
-        train_x_tfidf = np.asarray([0])
-
-    if params['USE_WORD_VECS'] == True:
-        keys = initialize_vocab(vocab, params)
-        dev_x_words = np.asarray(dev_x)
-        train_x_words = np.asarray(train_x)
-
+        # new_dev_x = []
+        # for sentence in dev_x:
+        #     sentence = dok_matrix(vectorizer.fit_transform(sentence)).items()
+        #     new_dev_x.append(sentence)
+        # dev_x_tfidf = np.asarray(new_dev_x)
+        # # dev_x = np.expand_dims(dev_x, axis=2)
+        # dev_x_words = np.asarray([0])
+        # train_x_words = np.asarray([0])
     output.write("Total vocab size: " + str(len(vocab))+ '\n')
 
     output.write("train set size: " + str(len(train_y))+ ' examples, '
@@ -283,18 +278,15 @@ def main(argv):
     sess.run(tf.initialize_all_variables())
     output.write( 'Running session...\n\n')
 
-    """
-    train_accuracy = accuracy.eval(feed_dict={
-        x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess)
-    """
     best_dev_accuracy = 0
-    output.write("initial accuracy %g \n"%accuracy.eval(feed_dict={x: feed(train_x_tfidf, train_x_words, keys, params), y_: train_y, dropout: 1.0}, session = sess))
+    output.write("initial accuracy %g \n"%accuracy.eval(feed_dict={x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = \
+        sess))
     for i in range(params['EPOCHS']):
         params['epoch'] = i + 1
         for j in range(batches_x.shape[0]/params['BATCH_SIZE']):
             batch_x, batch_y = get_batch(batches_x, batches_y, j, params)
             params['tensorflow_batch_size'] = batch_y.shape[0]
-            train_step.run(feed_dict={x: batch_x, y_: batch_y, dropout: params['TRAIN_DROPOUT']}, session = sess)
+            train_step.run(feed_dict={x: sub_vectors(batch_x, keys, params), y_: batch_y, dropout: params['TRAIN_DROPOUT']}, session = sess)
             #apply l2 clipping to weights and biases
             with sess.as_default():
                 check_l2 = tf.reduce_sum(weights[0]).eval()
@@ -307,23 +299,18 @@ def main(argv):
                 if np.asscalar(check_l2) > np.asscalar(tf.reduce_sum(weights[0]).eval()):
                     output.write('weights clipped\n')
         batches_x, batches_y = shuffle_in_unison(batches_x, batches_y)
-        train_softmax = cross_entropy.eval(feed_dict={x: temp_train_x, y_: train_y, dropout: 1.0}, session = sess)
+        train_softmax = cross_entropy.eval(feed_dict={x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess)
         output.write("epoch %d, training accuracy %g, training softmax error %g \n"
-            %(i, accuracy.eval(feed_dict={x: temp_train_x, y_: train_y, dropout: 1.0}, session = sess), train_softmax))
+            %(i, accuracy.eval(feed_dict={x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess), train_softmax))
 
         # cross_entropy_accuracy = cross_entropy.eval(feed_dict={
         #     x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess)
         # print("epoch %d, softmax error %g"%(i, cross_entropy_accuracy))
 
         #prints accuracy for dev set every epoch, DEV is a hyperparameter boolean
-        if params['USE_WORD_VECS']:
-            temp_dev_x = sub_vectors(dev_x, keys, params)
-        else:
-            temp_dev_x = dev_x
-        dev_softmax = cross_entropy.eval(feed_dict={x: temp_dev_x, y_: dev_y, dropout: 1.0}, session = sess)
-        dev_accuracy = accuracy.eval(feed_dict={x: temp_dev_x, y_: dev_y, dropout: 1.0}, session = sess)
+        dev_softmax = cross_entropy.eval(feed_dict={x: sub_vectors(dev_x, keys, params), y_: dev_y, dropout: 1.0}, session = sess)
+        dev_accuracy = accuracy.eval(feed_dict={x: sub_vectors(dev_x, keys, params), y_: dev_y, dropout: 1.0}, session = sess)
         output.write("dev set accuracy %g, softmax %g \n"%(dev_accuracy, dev_softmax))
-
         if dev_accuracy > best_dev_accuracy:
             #save model
             best_dev_accuracy = dev_accuracy
