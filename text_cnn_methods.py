@@ -4,6 +4,53 @@ import random
 import numpy as np
 import math
 import os.path
+# from sklearn.feature_extraction.text import TfidfVectorizer
+
+"""
+def tfidf(params):
+    train_examples = get_examples(params['TRAIN_FILE_NAME'])
+    dev_examples = get_examples(params['DEV_FILE_NAME'])
+    vocab = get_vocab(train_examples + dev_examples)
+    vectorizer = TfidfVectorizer(vocabulary = vocab)
+    for example in train_examples:
+        train_x.append(vectorizer.fit_transform(example))
+    dev_x = vectorizer.fit_transform(dev_examples)
+    return train_x, dev_x
+"""
+
+#get random batch of examples from train file
+def get_batches(params, train_x, train_y):
+    if params['epoch'] == 1:
+        np.random.seed(3435)
+        # print train_x.shape, train_y.shape
+        if train_y.shape[0] % params['BATCH_SIZE'] > 0:
+            extra_data_num = params['BATCH_SIZE'] - train_y.shape[0] % params['BATCH_SIZE']
+            train_set_x, train_set_y = shuffle_in_unison(train_x, train_y)
+            extra_data_x = train_set_x[:extra_data_num]
+            extra_data_y = train_set_y[:extra_data_num]
+            new_data_x = np.append(train_x, extra_data_x, axis=0)
+            new_data_y = np.append(train_y, extra_data_y, axis=0)
+            # print new_data_x.shape, new_data_y.shape
+        else:
+            new_data_x = train_x
+            new_data_y = train_y
+    new_data_x, new_data_y = shuffle_in_unison(new_data_x, new_data_y)
+    return new_data_x, new_data_y
+
+#index and loop through same batches again
+def get_batch(batches_x, batches_y, index, params):
+    cur_batch_x = batches_x[index*params['BATCH_SIZE']:(index+1)*params['BATCH_SIZE'],:]
+    cur_batch_y = batches_y[index*params['BATCH_SIZE']:(index+1)*params['BATCH_SIZE'],:]
+    return cur_batch_x, cur_batch_y
+
+def get_examples(file_name):
+    file_name = open(os.path.join(os.path.expanduser("~") + '/repos/tensorflow/' + file_name) + '.data', 'r')
+    #file_name = open(os.path.join(os.path.expanduser("~") + '/convnets/tensorflow/' + file_name) + '.data', 'r')
+    list_of_examples = []
+    for line in file_name:
+        #list_of_examples.append(clean_str(line, params))
+        list_of_examples.append(line)
+    return list_of_examples
 
 #initializes weights, random with stddev of .1
 def weight_variable(shape):
@@ -31,6 +78,17 @@ def define_nn(x, kernel_size, params, slices, weights, biases):
     biases.insert(len(biases), b)
     return slices, weights, biases
 
+def get_y(params, train):
+    #train_out = open(os.path.expanduser("~") + '/convnets/tensorflow/' + params['TRAIN_FILE_NAME'] + '.labels', 'r'))
+    if train == True:
+        out = open(os.path.expanduser("~") + '/repos/tensorflow/' + params['TRAIN_FILE_NAME'] + '.labels', 'r')
+    else:
+        out = open(os.path.expanduser("~") + '/repos/tensorflow/' + params['DEV_FILE_NAME'] + '.labels', 'r')
+    y = []
+    for line in out:
+        y.append(one_hot(int(line.rstrip()), params['CLASSES']))
+    return y
+
 def one_hot(category, CLASSES):
     one_hot = [0] * CLASSES
     one_hot[category] = 1
@@ -49,14 +107,17 @@ def pad(list_of_words, params):
     return list_of_words
 
 #get all examples from a file and return np arrays w/input and output
-def get_all(directory, file_name, lines, params):
+def get_all(directory, file_name, params):
     input_file = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, file_name) + '.data', 'r')
     output_file = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, file_name) + '.labels', 'r')
+    # input_file = open(os.path.join(os.path.expanduser("~") + '/repos/tensorflow/' + file_name) + '.data', 'r')
+    # output_file = open(os.path.join(os.path.expanduser("~") + '/repos/tensorflow/' + file_name) + '.labels', 'r')
     input_list = []
     output_list = []
-    for line in range(lines):
-        input_list.append(pad(tokenize(clean_str(input_file.readline(), SST = params['SST'])), params))
-        output_list.append(one_hot(int(output_file.readline().rstrip()), params['CLASSES']))
+    for line in input_file:
+        input_list.append(pad(tokenize(clean_str(line, params)), params))
+    for line in output_file:
+        output_list.append(one_hot(int(line.rstrip()), params['CLASSES']))
     return input_list, output_list
 
 #takes a batch of text, key with vocab indexed to vectors
@@ -92,15 +153,15 @@ def tokenize(line):
    return list_of_words
 
 #imported from
-def clean_str(string, TREC=False, SST=False):
-    if SST == True:
+def clean_str(string, params):
+    if params['SST'] == True:
         """
         Tokenization/string cleaning for the SST dataset
         """
         string = re.sub(r"[^A-Za-z0-9(),!?\'\`]", " ", string)
         string = re.sub(r"\s{2,}", " ", string)
         return string.strip().lower()
-    if ICMB == True:
+    if params['ICMB'] == True:
         string = string.replace('<br /><br />', ' ')
         string = re.sub(r"-", " - ", string)
     """
@@ -120,12 +181,17 @@ def clean_str(string, TREC=False, SST=False):
     string = re.sub(r"\)", " \) ", string)
     string = re.sub(r"\?", " \? ", string)
     string = re.sub(r"\s{2,}", " ", string)
-    return string.strip() if TREC else string.strip().lower()
+    return string.strip() if params['TREC'] else string.strip().lower()
 
-def find_lines(file_name):
-    text_file = open(file_name, 'r')
-    temp_string = text_file.read()
-    return temp_string.count('\n')
+def get_vocab(list_of_sentences):
+    list_of_words = []
+    for sentence in list_of_sentences:
+        list_of_words.extend(tokenize(sentence))
+    vocab = []
+    for word in list_of_words:
+        if word not in vocab:
+            vocab.append(word)
+    return vocab
 
 #create a vocabulary list from a file
 def find_vocab(list_of_sentences, vocab=None, master_key=None):
@@ -160,14 +226,6 @@ def initialize_vocab(vocab, params, master_key=None):
     #padding *must* be zeroed out
     #specify dtype?
     master_key['<PAD>'] = np.zeros([300])
-    #ideally eliminate
-    master_key[''] = np.zeros([300])
-    master_key['P'] = np.zeros([300])
-    master_key['A'] = np.zeros([300])
-    master_key['D'] = np.zeros([300])
-    master_key['<'] = np.zeros([300])
-    master_key['>'] = np.zeros([300])
-
     return master_key
 
 if __name__ == "__main__": main()

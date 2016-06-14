@@ -26,14 +26,15 @@
     # (commas only where necessary to distinguish numbers)
         # initial accuracy (train data)
         # training and dev accuracy at each epoch, dev softmax accuracy
-
+import numpy as np
 import tensorflow as tf
 import random
 import linecache
 from text_cnn_methods import *
-import numpy as np
 import sys, getopt
 import os
+from sklearn.feature_extraction.text import TfidfVectorizer
+from scipy.sparse import dia_matrix
 
 #define hyperparameters
 def define_globals(args):
@@ -51,11 +52,15 @@ def define_globals(args):
 
         'Adagrad' : False,
         'LEARNING_RATE' : args[1],
+        'USE_TFIDF' : True,
+        'USE_WORD_VECS' : False,
         'TRAIN_FILE_NAME' : 'train',
         'DEV_FILE_NAME' : 'dev',
         'WORD_VECS_FILE_NAME' : 'output.txt',
         'OUTPUT_FILE_NAME' : args[0],
         'SST' : True,
+        'ICMB' : False,
+        'TREC' : False,
         'DEV' : True,
 
         #set by program-do not change!
@@ -66,32 +71,6 @@ def define_globals(args):
         'key_errors' : [],
         'changes' : 0}
     return params
-
-
-#get random batch of examples from test file
-def get_batches(lines, params, train_x, train_y):
-    if params['epoch'] == 1:
-        np.random.seed(3435)
-        # print train_x.shape, train_y.shape
-        if train_y.shape[0] % params['BATCH_SIZE'] > 0:
-            extra_data_num = params['BATCH_SIZE'] - train_y.shape[0] % params['BATCH_SIZE']
-            train_set_x, train_set_y = shuffle_in_unison(train_x, train_y)
-            extra_data_x = train_set_x[:extra_data_num]
-            extra_data_y = train_set_y[:extra_data_num]
-            new_data_x = np.append(train_x, extra_data_x, axis=0)
-            new_data_y = np.append(train_y, extra_data_y, axis=0)
-            # print new_data_x.shape, new_data_y.shape
-        else:
-            new_data_x = train_x
-            new_data_y = train_y
-    new_data_x, new_data_y = shuffle_in_unison(new_data_x, new_data_y)
-    return new_data_x, new_data_y
-
-#index and loop through same batches again
-def get_batch(batches_x, batches_y, index, d, params):
-    cur_batch_x = batches_x[index*params['BATCH_SIZE']:(index+1)*params['BATCH_SIZE'],:]
-    cur_batch_y = batches_y[index*params['BATCH_SIZE']:(index+1)*params['BATCH_SIZE'],:]
-    return sub_vectors(cur_batch_x, d, params), cur_batch_y
 
 def sum_prob(x, y_,set_x, set_y, keys, params, correct_prediction, accuracy, dropout, sess):
         set_x_temp = set_x
@@ -104,17 +83,6 @@ def sum_prob(x, y_,set_x, set_y, keys, params, correct_prediction, accuracy, dro
         if set_y_temp.shape[0] > 0:
             remaining_examples = set_y_temp.shape[0]
             set_y_temp = np.append(set_y_temp, np.zeros((params['BATCH_SIZE'] - remaining_examples, params['CLASSES'])))
-            """
-            add1 = ['<PAD>'] * params['MAX_LENGTH']
-            print add1
-            print type(add1)
-            for i in range(params['BATCH_SIZE'] - remaining_examples - 1):
-                add1= add1.append(['<PAD>'] * params['MAX_LENGTH'])
-            print add1
-            print 'again' , set_x_temp
-            set_x_temp = np.append(set_x_temp, np.asarray(add1))
-            print set_x_temp
-            """
             zeroes = np.zeros((params['BATCH_SIZE']-remaining_examples, params['MAX_LENGTH'], params['WORD_VECTOR_LENGTH']))
             print zeroes.shape
             print tf.reduce_mean(tf.slice(tf.cast(correct_prediction, tf.float32), tf.constant([0]),
@@ -124,6 +92,20 @@ def sum_prob(x, y_,set_x, set_y, keys, params, correct_prediction, accuracy, dro
             print tf.reduce_mean(tf.cast(correct_prediction, tf.float32)).eval(feed_dict={x: np.append(sub_vectors(set_x_temp[0:remaining_examples], keys, params), zeroes), y_: set_y_temp, dropout: 1.0}, session = sess).eval()
             examples_correct += tf.reduce_mean(tf.slice(tf.cast(correct_prediction, tf.float32), tf.constant([0]), tf.constant([set_y_temp.shape[0]]))).eval(feed_dict={x: sub_vectors(set_x_temp[0:remaining_examples], keys, params), y_: set_y_temp, dropout: 1.0}, session = sess)
         return examples_correct*50/set_y.shape[0]
+
+#convert data for feeding into placeholders
+def feed(input_x, keys, params):
+    if params['USE_TFIDF'] == False:
+        return sub_vectors(input_x, keys, params)
+    else:
+        indices = []
+        values = []
+        for sentence_index in range(input_x.shape[0]):
+            for word_index in range(input_x.shape[1]):
+                indices.append([sentence_index, word_index, input_x[sentence_index][word_index][0])
+                values.append(input_x[sentence_index][word_index][1])
+        shape = np.array([input_x.shape[0], input_x.shape[1], len(vocab)])
+        return tf.SparseTensorValue(np.asarray(indices), np.asarray(values), shape)
 
 def main(argv):
     try:
@@ -166,22 +148,44 @@ def main(argv):
         + str(params['DEV_FILE_NAME']) + ', '
         + str(params['WORD_VECS_FILE_NAME']) + '\n')
 
-    train_size = find_lines(params['TRAIN_FILE_NAME'] + '.labels')
-    dev_size = find_lines(params['DEV_FILE_NAME'] + '.labels')
+    train_x, train_y = get_all(args[0], params['TRAIN_FILE_NAME'], params)
+    dev_x, dev_y = get_all(args[0], params['DEV_FILE_NAME'], params)
+    vocab = find_vocab(train_x + dev_x)
 
-    #create training and eval sets
-    dev_x, dev_y = get_all(args[0], params['DEV_FILE_NAME'], dev_size, params)
-    train_x, train_y = get_all(args[0], params['TRAIN_FILE_NAME'], train_size, params)
+    if params['USE_TFIDF'] == True:
+        output.write('Initializing tfidf arrays: train...')
+        keys = {}
+        params['WORD_VECTOR_LENGTH'] = 2
+        vectorizer = TfidfVectorizer(vocabulary = vocab)
+        new_train_x = []
+        for sentence in train_x:
+            sentence = dok_matrix(vectorizer.fit_transform(sentence)).items()
+            new_train_x.append(sentence)
+        train_x = np.asarray(new_train_x)
+        # train_x = np.expand_dims(train_x, axis=2)
+        output.write('  done. Dev...')
 
-    vocab = find_vocab(train_x)
-    vocab = find_vocab(dev_x,  vocab=vocab)
+        new_dev_x = []
+        for sentence in dev_x:
+            sentence = dia_matrix(vectorizer.fit_transform(sentence)).toarray()
+            new_dev_x.append(sentence)
+        dev_x = np.asarray(new_dev_x)
+        # dev_x = np.expand_dims(dev_x, axis=2)
+        output.write('  done.\n\n')
+
+    if params['USE_WORD_VECS'] == True:
+        # #create training and eval sets
+        # dev_x, dev_y = get_all(args[0], params['DEV_FILE_NAME'], params)
+        # train_x, train_y = get_all(args[0], params['TRAIN_FILE_NAME'], params)
+        #
+        # vocab = find_vocab(train_x)
+        # vocab = find_vocab(dev_x,  vocab=vocab)
+        keys = initialize_vocab(vocab, params)
+        dev_x = np.asarray(dev_x)
+        train_x = np.asarray(train_x)
+
     output.write("Total vocab size: " + str(len(vocab))+ '\n')
-
-    keys = initialize_vocab(vocab, params)
-
-    dev_x = np.asarray(dev_x)
     dev_y = np.asarray(dev_y)
-    train_x = np.asarray(train_x)
     train_y = np.asarray(train_y)
 
     output.write("train set size: " + str(len(train_y))+ ' examples, '
@@ -191,13 +195,12 @@ def main(argv):
     # y_ encodes labels: [batch size, classes]
     # x = tf.placeholder(tf.float32, [params['tensorflow_batch_size'], params['MAX_LENGTH'] * params['WORD_VECTOR_LENGTH']])
     # y_ = tf.placeholder(tf.float32, [params['tensorflow_batch_size'], params['CLASSES']])
-    x = tf.placeholder(tf.float32, [None, params['MAX_LENGTH'] * params['WORD_VECTOR_LENGTH']])
+    if params['USE_WORD_VECS'] == True:
+        x = tf.placeholder(tf.float32, [None, params['MAX_LENGTH'] * params['WORD_VECTOR_LENGTH']])
+        x = tf.reshape(x, [-1, params['MAX_LENGTH'], 1, params['WORD_VECTOR_LENGTH']])
     y_ = tf.placeholder(tf.float32, [None, params['CLASSES']])
-
-    # print tf.shape(x)[0]
-    # is x one tensor, or many??
-    x = tf.reshape(x, [-1, params['MAX_LENGTH'], 1, params['WORD_VECTOR_LENGTH']])
-
+    else:
+        x = tf.sparse.placeholder(tf.float32, shape=(None, len(vocab) * params['MAX_LENGTH']))
     #init lists for convolutional layer
     slices = []
     weights = []
@@ -230,7 +233,7 @@ def main(argv):
     accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
     num_correct = tf.reduce_sum(tf.cast(correct_prediction, tf.float32))
 
-    batches_x, batches_y = get_batches(train_size, params, train_x, train_y)
+    batches_x, batches_y = get_batches(params, train_x, train_y)
 
     #run session
     output.write( 'Initializing session...\n\n')
@@ -244,11 +247,11 @@ def main(argv):
         x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess)
     """
     best_dev_accuracy = 0
-    output.write("initial accuracy %g \n"%accuracy.eval(feed_dict={x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess))
+    output.write("initial accuracy %g \n"%accuracy.eval(feed_dict={x: feed(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess))
     for i in range(params['EPOCHS']):
         params['epoch'] = i + 1
         for j in range(batches_x.shape[0]/params['BATCH_SIZE']):
-            batch_x, batch_y = get_batch(batches_x, batches_y, j, keys, params)
+            batch_x, batch_y = get_batch(batches_x, batches_y, j, params)
             params['tensorflow_batch_size'] = batch_y.shape[0]
             train_step.run(feed_dict={x: batch_x, y_: batch_y, dropout: params['TRAIN_DROPOUT']}, session = sess)
             #apply l2 clipping to weights and biases
@@ -263,17 +266,21 @@ def main(argv):
                 if np.asscalar(check_l2) > np.asscalar(tf.reduce_sum(weights[0]).eval()):
                     output.write('weights clipped\n')
         batches_x, batches_y = shuffle_in_unison(batches_x, batches_y)
-        train_softmax = cross_entropy.eval(feed_dict={x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess)
+        train_softmax = cross_entropy.eval(feed_dict={x: temp_train_x, y_: train_y, dropout: 1.0}, session = sess)
         output.write("epoch %d, training accuracy %g, training softmax error %g \n"
-            %(i, accuracy.eval(feed_dict={x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess), train_softmax))
+            %(i, accuracy.eval(feed_dict={x: temp_train_x, y_: train_y, dropout: 1.0}, session = sess), train_softmax))
 
         # cross_entropy_accuracy = cross_entropy.eval(feed_dict={
         #     x: sub_vectors(train_x, keys, params), y_: train_y, dropout: 1.0}, session = sess)
         # print("epoch %d, softmax error %g"%(i, cross_entropy_accuracy))
 
         #prints accuracy for dev set every epoch, DEV is a hyperparameter boolean
-        dev_softmax = cross_entropy.eval(feed_dict={x: sub_vectors(dev_x, keys, params), y_: dev_y, dropout: 1.0}, session = sess)
-        dev_accuracy = accuracy.eval(feed_dict={x: sub_vectors(dev_x, keys, params), y_: dev_y, dropout: 1.0}, session = sess)
+        if params['USE_WORD_VECS']:
+            temp_dev_x = sub_vectors(dev_x, keys, params)
+        else:
+            temp_dev_x = dev_x
+        dev_softmax = cross_entropy.eval(feed_dict={x: temp_dev_x, y_: dev_y, dropout: 1.0}, session = sess)
+        dev_accuracy = accuracy.eval(feed_dict={x: temp_dev_x, y_: dev_y, dropout: 1.0}, session = sess)
         output.write("dev set accuracy %g, softmax %g \n"%(dev_accuracy, dev_softmax))
 
         if dev_accuracy > best_dev_accuracy:
