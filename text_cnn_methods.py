@@ -174,10 +174,10 @@ def find_vocab(list_of_sentences, vocab=None, master_key=None):
     return vocab
 
 #initialize dict of vocabulary with word2vec or random numbers
-def initialize_vocab(vocab, params, master_key=None):
-    if master_key is None:
-        master_key = {}
-    if params['USE_WORD_VECS']:
+def initialize_vocab(vocab, params):
+    embed_keys = {}
+    key_list = []
+    if params['USE_WORD2VEC']:
         word2vec = open(params['WORD_VECS_FILE_NAME'], 'r')
         word2vec.readline()
         for i in range(3000000):   #number of words in word2vec
@@ -187,13 +187,16 @@ def initialize_vocab(vocab, params, master_key=None):
                 vector = []
                 for j in range(1, len(line)):
                     vector.append(float(line[j]))
-                master_key[line[0]] = np.asarray(vector)
+                key_list.append(vector)
+                embed_keys[line[0]] = len(embed_keys)
                 vocab.remove(line[0])
         word2vec.close()
     for word in vocab:
-        master_key[word] = np.random.uniform(-0.25,0.25,params['WORD_VECTOR_LENGTH'])
-    #padding *must* be zeroed out
-    master_key['<PAD>'] = np.zeros([300])
-    return master_key
+        if word == '<PAD>':
+            key_list.append(np.zeros([300]))
+        else:
+            key_list.append(np.random.uniform(-0.25,0.25,params['WORD_VECTOR_LENGTH']))
+        embed_keys[word] = len(embed_keys)
+    return embed_keys, key_list
 
 if __name__ == "__main__": main()
