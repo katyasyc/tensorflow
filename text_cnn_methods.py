@@ -39,6 +39,29 @@ def initial_print_statements(params, args):
         output.write('not updating.\n')
     return output
 
+def batch(input_list, output_list, params, embed_keys):
+    input_list, output_list = sort_examples_by_length(input_list, output_list)
+    all_x, all_y = [], []
+    while len(output_list) >= params['BATCH_SIZE']:
+        all_x.append(sub_indices(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys))
+        all_y.append(np.asarray(output_list[:params['BATCH_SIZE']]))
+        input_list = input_list[params['BATCH_SIZE']:]
+        output_list = output_list[params['BATCH_SIZE']:]
+    if len(output_list) > 0:
+        extras = params['BATCH_SIZE'] - len(output_list)
+        output_list = np.asarray(output_list)
+        input_list = sub_indices(pad_all(input_list), embed_keys)
+        output_list.concatenate((0, all_y[len(all_y)]))
+        input_list.concatenate((0, all_x[len(all_x)]))
+        all_y.append(output_list[params['BATCH_SIZE'] - output_list.shape[0]:])
+        all_x.append(input_list[params['BATCH_SIZE'] - input_list.shape[0]:])
+        # all_y.append(np.concatenate((np.asarray(output_list), np.zeros((extras, params['CLASSES']))), axis = 0))
+        # zeroes = np.full((extras, input_list.shape[1]), embed_keys['<PAD>'], dtype=int)
+        # all_x.append(np.concatenate((input_list, zeroes), axis = 0))
+        return all_x, all_y, True, extras
+    else:
+        return all_x, all_y, False, 0
+
 #get random batch of examples from train file
 def get_batches(params, train_x, train_y):
     if params['epoch'] == 1:
@@ -100,11 +123,27 @@ def one_hot(category, CLASSES):
     one_hot[category] = 1
     return np.asarray(one_hot)
 
+def sub_indices(input_x, embed_keys):
+    example_list = []
+    for sentence in input_x:
+        example_indices = []
+        for token in sentence:
+            example_indices.append(embed_keys[token])
+        example_list.append(example_indices)
+    return np.asarray(example_list)
+
+#takes tokenized list_of_examples and pads all to the maximum length
+def pad_all(list_of_examples):
+    max_length = get_max_length(list_of_examples)
+    for i in range(len(list_of_examples)):
+        list_of_examples[i] = pad_one(list_of_examples[i], max_length)
+    return np.asarray(list_of_examples)
+
 #pads all sentences to same length
-def pad(list_of_words, params):
-    left = (params['MAX_LENGTH']  - len(list_of_words)) / 2
+def pad_one(list_of_words, max_length):
+    left = (max_length - len(list_of_words)) / 2
     right = left
-    if (params['MAX_LENGTH'] - len(list_of_words)) % 2 != 0:
+    if (max_length - len(list_of_words)) % 2 != 0:
         right += 1
     for i in range(left):
         list_of_words.insert(0, '<PAD>')
@@ -112,25 +151,12 @@ def pad(list_of_words, params):
         list_of_words.append('<PAD>')
     return list_of_words
 
-#get all examples from a file and return np arrays w/input and output
-def get_strings(directory, file_name, params):
-    input_file = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, file_name) + '.data', 'r')
-    input_list = []
-    for line in input_file:
-        input_list.append(clean_str(line, params))
-    return input_list
-
-def get_max_length(directory, train_file, dev_file):
-    train = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, train_file) + '.data', 'r')
-    dev = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, dev_file) + '.data', 'r')
+def get_max_length(list_of_examples):
     max_length = 0
-    for line in dev:
-        list_of_words = tokenize(line)
-        max_length = max(max_length, len(list_of_words))
-    for line in train:
-        list_of_words = tokenize(line)
-        max_length = max(max_length, len(list_of_words))
+    for line in list_of_examples:
+        max_length = max(max_length, len(line))
     return max_length
+
 #get all examples from a file and return np arrays w/input and output
 def get_all(directory, file_name, params):
     input_file = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, file_name) + '.data', 'r')
@@ -162,8 +188,9 @@ def sub_vectors(input_list, d, params):
 
 def sort_examples_by_length(input_list, output_list):
     lengths = []
-    for example in input_list:
-        lengths.append(number_of_tokens(example))
+    for i in range(len(input_list)):
+        input_list[i] = tokenize(input_list[i])
+        lengths.append(len(input_list[i]))
     new_lengths = []
     new_input_list = []
     new_output_list = []
@@ -235,14 +262,15 @@ def clean_str(string, params):
     return string.strip() if params['TREC'] else string.strip().lower()
 
 #create a vocabulary list from a file
-def find_vocab(list_of_sentences, vocab=None, master_key=None):
-    list_of_words = [word for sentence in list_of_sentences for word in sentence]
+def find_vocab(list_of_sentences, params, vocab=None):
+    list_of_words = []
+    for sentence in list_of_sentences:
+        list_of_words.extend(tokenize(clean_str(sentence, params)))
     if vocab is None:
         vocab = []
-    if master_key is None:
-        master_key = {}
+    list_of_words.insert(0, '<PAD>')
     for word in list_of_words:
-        if word not in master_key and word not in vocab:
+        if word not in vocab:
             vocab.append(word)
     return vocab
 
