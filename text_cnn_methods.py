@@ -5,6 +5,39 @@ import numpy as np
 import math
 import os.path
 
+def initial_print_statements(params, args):
+    params['OUTPUT_FILE_NAME'] += ',' + str(params['EPOCHS'])
+    if params['USE_TFIDF']:
+        params['OUTPUT_FILE_NAME'] += 'tfidf'
+    params['OUTPUT_FILE_NAME'] += ','
+    if params['USE_WORD2VEC']:
+        params['OUTPUT_FILE_NAME'] += 'word2vec'
+    else:
+        params['OUTPUT_FILE_NAME'] += 'randinit'
+    params['OUTPUT_FILE_NAME'] += ','
+    if params['UPDATE_WORD_VECS']:
+        params['OUTPUT_FILE_NAME'] += 'upd'
+    params['OUTPUT_FILE_NAME'] += args[3]
+    output = open(params['OUTPUT_FILE_NAME'] + '.txt', 'a', 0)
+    if params['Adagrad']:
+        output.write("Running Adagrad on " + args[0] + " with a learning rate of ")
+    else:
+        output.write("Running Adam on " + args[0] + " with a learning rate of ")
+    output.write(str(params['LEARNING_RATE']) + ' and ' + str(params['EPOCHS']) + ' epochs\n')
+    output.write('using batch size ' + str(params['BATCH_SIZE']))
+    if params['USE_TFIDF']:
+        output.write(', tfidf, ')
+    else:
+        output.write(', ')
+    if params['USE_WORD2VEC']:
+        output.write('word2vec, ')
+    else:
+        output.write('random init, ')
+    if params['UPDATE_WORD_VECS']:
+        output.write('updating.\n')
+    else:
+        output.write('not updating.\n')
+    return output
 
 #get random batch of examples from train file
 def get_batches(params, train_x, train_y):
@@ -50,9 +83,14 @@ def define_nn(x, kernel_size, params, slices, weights, biases):
     #apply bias and relu
     relu = tf.nn.relu(tf.nn.bias_add(conv, b))
     #max pool; each neuron sees 1 filter and returns max over a sentence
-    pooled = tf.nn.max_pool(relu, ksize=[1, params['MAX_LENGTH'], 1, 1],
-        strides=[1, params['MAX_LENGTH'], 1, 1], padding='SAME')
-    slices.insert(len(slices), pooled)
+
+    #FIX: PROBABLY BREAKS if BATCH_SIZE is odd!!!
+    if params['BATCH_SIZE'] > 1:
+        pooled = tf.nn.max_pool(relu, ksize=[1, params['MAX_LENGTH'], 1, 1],
+            strides=[1, params['MAX_LENGTH'], 1, 1], padding='SAME')
+        slices.insert(len(slices), pooled)
+    else:
+        slices.insert(len(slices), relu)
     weights.insert(len(weights), W)
     biases.insert(len(biases), b)
     return slices, weights, biases
@@ -82,6 +120,17 @@ def get_strings(directory, file_name, params):
         input_list.append(clean_str(line, params))
     return input_list
 
+def get_max_length(directory, train_file, dev_file):
+    train = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, train_file) + '.data', 'r')
+    dev = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, dev_file) + '.data', 'r')
+    max_length = 0
+    for line in dev:
+        list_of_words = tokenize(line)
+        max_length = max(max_length, len(list_of_words))
+    for line in train:
+        list_of_words = tokenize(line)
+        max_length = max(max_length, len(list_of_words))
+    return max_length
 #get all examples from a file and return np arrays w/input and output
 def get_all(directory, file_name, params):
     input_file = open(os.path.expanduser("~") + '/convnets/tensorflow/' + os.path.join(directory, file_name) + '.data', 'r')
@@ -91,10 +140,14 @@ def get_all(directory, file_name, params):
     input_list = []
     output_list = []
     for line in input_file:
-        input_list.append(pad(tokenize(clean_str(line, params)), params))
+        input_list.append(clean_str(line, params))
     for line in output_file:
         output_list.append(one_hot(int(line.rstrip()), params['CLASSES']))
     return input_list, output_list
+
+def number_of_tokens(string1):
+   list_of_words = tokenize(string1)
+   return len(list_of_words)
 
 #takes a batch of text, key with vocab indexed to vectors
 #returns word vectors concatenated into a list
@@ -106,6 +159,26 @@ def sub_vectors(input_list, d, params):
             list_of_words.append(d[input_list[i][j]])
         list_of_examples.append(list_of_words)
     return np.expand_dims(np.asarray(list_of_examples), 2)
+
+def sort_examples_by_length(input_list, output_list):
+    lengths = []
+    for example in input_list:
+        lengths.append(number_of_tokens(example))
+    new_lengths = []
+    new_input_list = []
+    new_output_list = []
+    for i in range(len(lengths)):
+        for j in range(len(new_lengths)):
+            if lengths[i] < new_lengths[j]:
+                new_lengths.insert(j, lengths[i])
+                new_input_list.insert(j, input_list[i])
+                new_output_list.insert(j, output_list[i])
+                break
+        else:
+            new_lengths.append(lengths[i])
+            new_input_list.append(input_list[i])
+            new_output_list.append(output_list[i])
+    return new_input_list, new_output_list
 
 #shuffle two numpy arrays in unison
 def shuffle_in_unison(a, b):
@@ -193,7 +266,7 @@ def initialize_vocab(vocab, params):
         word2vec.close()
     for word in vocab:
         if word == '<PAD>':
-            key_list.append(np.zeros([300]))
+            key_list.append(np.zeros([params['WORD_VECTOR_LENGTH']]))
         else:
             key_list.append(np.random.uniform(-0.25,0.25,params['WORD_VECTOR_LENGTH']))
         embed_keys[word] = len(embed_keys)
