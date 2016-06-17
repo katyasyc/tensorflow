@@ -39,28 +39,68 @@ def initial_print_statements(params, args):
         output.write('not updating.\n')
     return output
 
+#breaks when BATCH_SIZE = 1
 def batch(input_list, output_list, params, embed_keys):
-    input_list, output_list = sort_examples_by_length(input_list, output_list)
     all_x, all_y = [], []
+    if params['BATCH_SIZE'] == 1:
+        while len(output_list) > 0:
+            # print 'remaining lengeth', len(output_list)
+            # print 'batches', len(all_y)
+            # print input_list[0]
+            all_x.append(np.expand_dims(sub_indices_one(input_list[0], embed_keys), axis = 0))
+            all_y.append(np.reshape(np.asarray(output_list[0]), (1, 2)))
+            input_list = input_list[1:]
+            output_list = output_list[1:]
+        # print 'consecutive ex', all_x[1], all_x[2]
+        return all_x, all_y, False, 0
     while len(output_list) >= params['BATCH_SIZE']:
+        # print 'start'
+        # print sub_indices(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys)
         all_x.append(sub_indices(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys))
+        # print 'after', all_x
         all_y.append(np.asarray(output_list[:params['BATCH_SIZE']]))
         input_list = input_list[params['BATCH_SIZE']:]
         output_list = output_list[params['BATCH_SIZE']:]
     if len(output_list) > 0:
         extras = params['BATCH_SIZE'] - len(output_list)
-        output_list = np.asarray(output_list)
+        # output_list = np.asarray(output_list)
         input_list = sub_indices(pad_all(input_list), embed_keys)
-        output_list.concatenate((0, all_y[len(all_y)]))
-        input_list.concatenate((0, all_x[len(all_x)]))
-        all_y.append(output_list[params['BATCH_SIZE'] - output_list.shape[0]:])
-        all_x.append(input_list[params['BATCH_SIZE'] - input_list.shape[0]:])
-        # all_y.append(np.concatenate((np.asarray(output_list), np.zeros((extras, params['CLASSES']))), axis = 0))
-        # zeroes = np.full((extras, input_list.shape[1]), embed_keys['<PAD>'], dtype=int)
-        # all_x.append(np.concatenate((input_list, zeroes), axis = 0))
+        # output_list.concatenate((0, all_y[len(all_y)]))
+        # input_list.concatenate((0, all_x[len(all_x)]))
+        # all_y = all_y.append(output_list[params['BATCH_SIZE'] - output_list.shape[0]:])
+        # all_x = all_x.append(input_list[params['BATCH_SIZE'] - input_list.shape[0]:])
+        all_y.append(np.concatenate((np.asarray(output_list), np.zeros((extras, params['CLASSES']))), axis = 0))
+        zeroes = np.full((extras, input_list.shape[1]), embed_keys['<PAD>'], dtype=int)
+        all_x.append(np.concatenate((input_list, zeroes), axis = 0))
         return all_x, all_y, True, extras
     else:
         return all_x, all_y, False, 0
+
+def scramble_batches(input_list, output_list, params, embed_keys,
+                     incomplete, extras):
+    input_list, output_list = shuffle_in_unison(input_list, output_list)
+    # if len(input_list) > params['MAX_EPOCH_SIZE']:
+    #     extras = params['MAX_EPOCH_SIZE'] % params['BATCH_SIZE']
+    #     input_list = input_list[:(params['MAX_EPOCH_SIZE']) - extras]
+    #     output_list = output_list[:(params['MAX_EPOCH_SIZE']) - extras]
+    #     incomplete = False
+    if incomplete:
+        duplicates_x = []
+        duplicates_y = []
+        for i in range(extras):
+            duplicates_x.append(input_list[i])
+            duplicates_y.append(output_list[i])
+        input_list.extend(duplicates_x)
+        output_list.extend(duplicates_y)
+    input_list, output_list = sort_examples_by_length(input_list, output_list, tokenize = False)
+    batches_x, batches_y = [], []
+    while len(output_list) >= params['BATCH_SIZE']:
+        batches_x.append(sub_indices(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys))
+        batches_y.append(np.asarray(output_list[:params['BATCH_SIZE']]))
+        input_list = input_list[params['BATCH_SIZE']:]
+        output_list = output_list[params['BATCH_SIZE']:]
+    return batches_x, batches_y
+
 
 #get random batch of examples from train file
 def get_batches(params, train_x, train_y):
@@ -107,13 +147,9 @@ def define_nn(x, kernel_size, params, slices, weights, biases):
     relu = tf.nn.relu(tf.nn.bias_add(conv, b))
     #max pool; each neuron sees 1 filter and returns max over a sentence
 
-    #FIX: PROBABLY BREAKS if BATCH_SIZE is odd!!!
-    if params['BATCH_SIZE'] > 1:
-        pooled = tf.nn.max_pool(relu, ksize=[1, params['MAX_LENGTH'], 1, 1],
-            strides=[1, params['MAX_LENGTH'], 1, 1], padding='SAME')
-        slices.insert(len(slices), pooled)
-    else:
-        slices.insert(len(slices), relu)
+    pooled = tf.nn.max_pool(relu, ksize=[1, params['MAX_LENGTH'], 1, 1],
+        strides=[1, params['MAX_LENGTH'], 1, 1], padding='SAME')
+    slices.insert(len(slices), pooled)
     weights.insert(len(weights), W)
     biases.insert(len(biases), b)
     return slices, weights, biases
@@ -126,18 +162,23 @@ def one_hot(category, CLASSES):
 def sub_indices(input_x, embed_keys):
     example_list = []
     for sentence in input_x:
-        example_indices = []
-        for token in sentence:
-            example_indices.append(embed_keys[token])
-        example_list.append(example_indices)
+        example_list.append(sub_indices_one(sentence, embed_keys))
     return np.asarray(example_list)
+
+def sub_indices_one(sentence, embed_keys):
+    list_of_indices = []
+    for token in sentence:
+        list_of_indices.append(embed_keys[token])
+    return list_of_indices
 
 #takes tokenized list_of_examples and pads all to the maximum length
 def pad_all(list_of_examples):
     max_length = get_max_length(list_of_examples)
     for i in range(len(list_of_examples)):
         list_of_examples[i] = pad_one(list_of_examples[i], max_length)
-    return np.asarray(list_of_examples)
+    # print 'length', len(list_of_examples[0])
+    # print 'contents: ', list_of_examples[0]
+    return list_of_examples
 
 #pads all sentences to same length
 def pad_one(list_of_words, max_length):
@@ -166,7 +207,7 @@ def get_all(directory, file_name, params):
     input_list = []
     output_list = []
     for line in input_file:
-        input_list.append(clean_str(line, params))
+        input_list.append(tokenize(clean_str(line, params)))
     for line in output_file:
         output_list.append(one_hot(int(line.rstrip()), params['CLASSES']))
     return input_list, output_list
@@ -186,15 +227,21 @@ def sub_vectors(input_list, d, params):
         list_of_examples.append(list_of_words)
     return np.expand_dims(np.asarray(list_of_examples), 2)
 
-def sort_examples_by_length(input_list, output_list):
+def sort_examples_by_length(input_list, output_list, tokenize = True):
     lengths = []
     for i in range(len(input_list)):
-        input_list[i] = tokenize(input_list[i])
         lengths.append(len(input_list[i]))
     new_lengths = []
     new_input_list = []
     new_output_list = []
     for i in range(len(lengths)):
+
+        # if lengths[i] == 1:
+        #     del lengths[i]
+        #     del input_list[i]
+        #     del output_list[i]
+        # else:
+
         for j in range(len(new_lengths)):
             if lengths[i] < new_lengths[j]:
                 new_lengths.insert(j, lengths[i])
@@ -265,7 +312,7 @@ def clean_str(string, params):
 def find_vocab(list_of_sentences, params, vocab=None):
     list_of_words = []
     for sentence in list_of_sentences:
-        list_of_words.extend(tokenize(clean_str(sentence, params)))
+        list_of_words.extend(sentence)
     if vocab is None:
         vocab = []
     list_of_words.insert(0, '<PAD>')

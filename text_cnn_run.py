@@ -16,11 +16,11 @@
 
 #todo:
     # test amazon, congress, convote
-    # test updating weights
-#fix memory
-#time
-#minibatch size
-#fix minibatch size
+
+    #possible issues:
+    #weights not updating
+    #accuracy not printing correctly
+
 
 #program expects:
     # flags: -a for Adagrad, -u for updating, -w for use word2vec, -t for use tfidf
@@ -48,7 +48,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 #define hyperparameters
 def define_globals(args):
-    params = {'WORD_VECTOR_LENGTH' : 300,
+    params = {'WORD_VECTOR_LENGTH' : 100,
         'FILTERS' : 100,
         'KERNEL_SIZES' : [3,4,5],
         'CLASSES' : 2,
@@ -57,8 +57,9 @@ def define_globals(args):
         'L2_NORM_CONSTRAINT' : 3.0,
         'TRAIN_DROPOUT' : 0.5,
 
-        'BATCH_SIZE' : 1,
+        'BATCH_SIZE' : 50,
         'EPOCHS' : args[2],
+        'MAX_EPOCH_SIZE' : 10000,
 
         'Adagrad' : False,
         'LEARNING_RATE' : args[1],
@@ -72,10 +73,8 @@ def define_globals(args):
         'SST' : True,
         'ICMB' : False,
         'TREC' : False,
-        'DEV' : True,
 
         #set by program-do not change!
-        'batch_iterations' : 0,
         'epoch' : 1,
         'l2-loss' : tf.constant(0),
         #debug
@@ -85,7 +84,7 @@ def define_globals(args):
 
 def analyze_argv(argv):
     try:
-        opts, args = getopt.getopt(argv, "wtau")
+        opts, args = getopt.getopt(argv, "wtaus")
     except getopt.GetoptError:
         print('Unable to run; GetoptError')
         sys.exit(2)
@@ -116,49 +115,49 @@ def analyze_argv(argv):
             params['UPDATE_WORD_VECS'] = True
         if opt[0] == ('-s'):
             params['BATCH_SIZE'] = 1
-    params['OUTPUT_FILE_NAME'] += 'sgd'
+            params['OUTPUT_FILE_NAME'] += 'sgd'
     return args, params
 
-def sub_indices(input_x, embed_keys):
-    example_list = []
-    for sentence in input_x:
-        example_indices = []
-        for token in sentence:
-            example_indices.append(embed_keys[token])
-        example_list.append(example_indices)
-    return np.asarray(example_list)
-
-def sum_prob(x, y_,set_x, set_y, keys, params, correct_prediction, dropout, sess):
-        set_x_temp = set_x
-        set_y_temp = set_y
+def sum_prob(x, y_, bundle, params, correct_prediction, dropout, sess):
+        all_x, all_y, incomplete, extras, examples_total = bundle
         sum_correct = tf.reduce_sum(tf.cast(correct_prediction, dtype=tf.float32))
         examples_correct = 0
-        while set_y_temp.shape[0] >= params['BATCH_SIZE']:
-            examples_correct += sum_correct.eval(feed_dict={x: set_x_temp[0:50], y_: set_y_temp[0:50], dropout: 1.0}, session = sess)
-            set_x_temp = set_x_temp[50:]
-            set_y_temp = set_y_temp[50:]
-        if set_y_temp.shape[0] > 0:
-            remaining_examples = set_y_temp.shape[0]
-            set_y_temp = np.concatenate((set_y_temp, np.zeros((params['BATCH_SIZE'] - remaining_examples, params['CLASSES']))), axis = 0)
-            zeroes = np.full((params['BATCH_SIZE']-remaining_examples, params['MAX_LENGTH']), keys['<PAD>'], dtype=int)
-            set_x_temp = np.concatenate((set_x_temp, zeroes), axis = 0)
-            final_batch = np.asarray(correct_prediction.eval(feed_dict={x: set_x_temp, y_: set_y_temp, dropout: 1.0}, session = sess))
-            for i in range(0, remaining_examples):
+        if incomplete == False:
+            while len(all_x) > 0:
+                examples_correct += sum_correct.eval(feed_dict={x: all_x[0],
+                    y_: all_y[0], dropout: 1.0}, session = sess)
+                all_x = all_x[1:]
+                all_y = all_y[1:]
+        else:
+            while len(all_x) > 1:
+                examples_correct += sum_correct.eval(feed_dict={x: all_x[0],
+                    y_: all_y[0], dropout: 1.0}, session = sess)
+                all_x = all_x[1:]
+                all_y = all_y[1:]
+            final_batch = np.asarray(correct_prediction.eval(feed_dict={x: all_x[0], y_: all_y[0], dropout: 1.0}, session = sess))
+            for i in range(0, params['BATCH_SIZE'] - extras):
                 if final_batch[i] == True:
                     examples_correct += 1
-        return float(examples_correct) / set_y.shape[0]
+        return float(examples_correct) / examples_total
 
 def main(argv):
     args, params = analyze_argv(argv)
 
     output = initial_print_statements(params, args)
     train_x, train_y = get_all(args[0], params['TRAIN_FILE_NAME'], params)
+
     dev_x, dev_y = get_all(args[0], params['DEV_FILE_NAME'], params)
     vocab = find_vocab(train_x + dev_x, params)
-    embed_keys, key_list = initialize_vocab(vocab, params)
-    train_bundle = batch(train_x, train_y, params, embed_keys)
-    dev_bundle = batch(dev_x, dev_y, params, embed_keys)
 
+    embed_keys, key_list = initialize_vocab(vocab, params)
+    train_x, train_y = sort_examples_by_length(train_x, train_y)
+    dev_x, dev_y = sort_examples_by_length(dev_x, dev_y)
+    train_eval_bundle = batch(train_x, train_y, params, embed_keys) + (len(train_y),)
+    dev_bundle = batch(dev_x, dev_y, params, embed_keys) + (len(dev_y),)
+    if params['BATCH_SIZE'] == 1:
+        batches_x, batches_y = train_eval_bundle[:2]
+    else:
+        batches_x, batches_y = scramble_batches(train_x, train_y, params, embed_keys, train_eval_bundle[2], train_eval_bundle[3])
 
     #note: normalizing over average_weight improves accuracy by 2 points in trials
     #average_weight is 8 point something (!), which overshadows words in dev but not train
@@ -174,19 +173,18 @@ def main(argv):
                                         average_weight)
 
     key_array = np.asarray(key_list)
-    print type(len(train_y)),type(len(train_bundle[0]))
     output.write("Total vocab size: " + str(len(vocab))+ '\n')
-    output.write('train set size: %d examples, %d batches per epoch\n'%(len(train_y), len(train_bundle[0])))
+    output.write('train set size: %d examples, %d batches per epoch\n'%(len(train_y), len(train_eval_bundle[0])))
     output.write("dev set size: " + str(len(dev_y))+ ' examples\n\n')
 
-    x = tf.placeholder(tf.int32, [None, params['MAX_LENGTH']])
-    y_ = tf.placeholder(tf.float32, [None, params['CLASSES']])
+    x = tf.placeholder(tf.int32, [params['BATCH_SIZE'], None])
+    y_ = tf.placeholder(tf.float32, [params['BATCH_SIZE'], params['CLASSES']])
 
     word_embeddings = tf.Variable(tf.convert_to_tensor(key_array, dtype = tf.float32),
                                   trainable = params['UPDATE_WORD_VECS'])
     embedding_layer = tf.nn.embedding_lookup(word_embeddings, x)
     embedding_output = tf.reshape(embedding_layer,
-                    [-1, params['MAX_LENGTH'], 1, params['WORD_VECTOR_LENGTH']])
+                    [params['BATCH_SIZE'], -1, 1, params['WORD_VECTOR_LENGTH']])
 
     #init lists for convolutional layer
     slices = []
@@ -196,14 +194,15 @@ def main(argv):
     for kernel_size in params['KERNEL_SIZES']:
         slices, weights, biases = define_nn(embedding_output, kernel_size,
                                             params, slices, weights, biases)
-
-    h_pool = tf.concat(len(params['KERNEL_SIZES']), slices)
-
+    # print slices
+    h_pool = tf.concat(3, slices)
+    # print h_pool
     #apply dropout (p = TRAIN_DROPOUT or TEST_DROPOUT)
     dropout = tf.placeholder(tf.float32)
     h_pool_drop = tf.nn.dropout(h_pool, dropout)
 
-    h_pool_flat = tf.squeeze(h_pool_drop)
+    h_pool_flat = tf.reshape(h_pool_drop, [params['BATCH_SIZE'], -1])
+    # print h_pool_flat
     #fully connected softmax layer
     W_fc = weight_variable([len(params['KERNEL_SIZES']) * params['FILTERS'],
                             params['CLASSES']])
@@ -211,8 +210,8 @@ def main(argv):
     y_conv = tf.nn.softmax(tf.matmul(h_pool_flat, W_fc) + b_fc)
 
     #define error for training steps
-    cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_conv),
-                                   reduction_indices=[1]))
+    log_loss = -tf.reduce_sum(y_ * tf.log(y_conv), reduction_indices=[1])
+    cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_conv), reduction_indices=[1]))
     if params['Adagrad']:
         train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
     else:
@@ -227,25 +226,24 @@ def main(argv):
                       intra_op_parallelism_threads=3, use_per_session_threads=True))
     sess.run(tf.initialize_all_variables())
     output.write( 'Running session...\n\n')
-    output.write('setup time: ' + str(time.clock()))
+    output.write('setup time: %g\n'%(time.clock()))
     best_dev_accuracy = 0
-    output.write("initial accuracy %g \n"%accuracy.eval(feed_dict=
-        {x: sub_indices(train_x, embed_keys), y_: train_y, dropout: 1.0},
-        session = sess))
+    train_softmax = sum_prob(x, y_, train_eval_bundle, params, log_loss, dropout, sess)
+    initial_accuracy = sum_prob(x, y_, train_eval_bundle, params, correct_prediction, dropout, sess)
+    output.write("initial accuracy %g softmax%g \n"%(initial_accuracy, train_softmax))
     output.write('start time: ' + str(time.clock()) + '\n')
-    time = time.clock()
+    time_index = time.clock()
     epoch_time = 0
     for i in range(params['EPOCHS']):
         params['epoch'] = i + 1
-        for j in range(batches_x.shape[0]/params['BATCH_SIZE']):
-            batch_x, batch_y = get_batch(batches_x, batches_y, j, params)
-            params['tensorflow_batch_size'] = batch_y.shape[0]
-            train_step.run(feed_dict={x: sub_indices(batch_x, embed_keys),
-                                      y_: batch_y,
+        for j in range(len(batches_x)):
+            train_step.run(feed_dict={x: batches_x[j],
+                                      y_: batches_y[j],
                                       dropout: params['TRAIN_DROPOUT']},
                                       session = sess)
             #apply l2 clipping to weights and biases
             with sess.as_default():
+                # print weights[0].eval()
                 check_l2 = tf.reduce_sum(weights[0]).eval()
                 for W in weights:
                     W = tf.clip_by_average_norm(W, params['L2_NORM_CONSTRAINT'])
@@ -255,23 +253,53 @@ def main(argv):
                 b_fc = tf.clip_by_average_norm(b_fc, params['L2_NORM_CONSTRAINT'])
                 if np.asscalar(check_l2) > np.asscalar(tf.reduce_sum(weights[0]).eval()):
                     output.write('weights clipped\n')
-        batches_x, batches_y = shuffle_in_unison(batches_x, batches_y)
-        train_softmax = cross_entropy.eval(feed_dict=
-            {x: sub_indices(train_x, embed_keys),
-            y_: train_y, dropout: 1.0}, session = sess)
-        train_accuracy = accuracy.eval(feed_dict=
-                                    {x: sub_indices(train_x, embed_keys),
-                                     y_: train_y, dropout: 1.0}, session = sess)
+        if params['BATCH_SIZE'] == 1:
+            batches_x, batches_y = shuffle_in_unison(batches_x, batches_y)
+        else:
+            batches_x, batches_y = scramble_batches(train_x, train_y, params, embed_keys, train_eval_bundle[2], train_eval_bundle[3])
+        # train_softmax = cross_entropy.eval(feed_dict=
+        #     {x: sub_indices(train_x, embed_keys),
+        #     y_: train_y, dropout: 1.0}, session = sess)
+        # print 'batches', batches_x[0].shape,batches_x[0], batches_y[0]
+        # print 'train', train_eval_bundle[0][0].shape, train_eval_bundle[0][0], train_eval_bundle[1][0]
+        # print 'dev', dev_bundle[0][0].shape, dev_bundle[0][0], dev_bundle[1][0]
+        # print accuracy.eval(feed_dict={x: batches_x[0],
+        #                           y_: batches_y[0],
+        #                           dropout: params['TRAIN_DROPOUT']},
+        #                           session = sess)
+        train_softmax = sum_prob(x, y_, train_eval_bundle, params, log_loss, dropout, sess)
+
+        train_accuracy = sum_prob(x, y_, train_eval_bundle, params, log_loss, dropout, sess)
+
         output.write("epoch %d, training accuracy %g, training softmax error %g \n"
             %(i, train_accuracy, train_softmax))
 
-        dev_softmax = cross_entropy.eval(feed_dict=
-                                    {x: sub_indices(dev_x, embed_keys),
-                                     y_: dev_y, dropout: 1.0}, session = sess)
-        dev_accuracy = accuracy.eval(feed_dict=
-                                    {x: sub_indices(dev_x, embed_keys),
-                                     y_: dev_y, dropout: 1.0}, session = sess)
+        # dev_softmax = cross_entropy.eval(feed_dict=
+        #                             {x: sub_indices(dev_x, embed_keys),
+        #                              y_: dev_y, dropout: 1.0}, session = sess)
 
+        #does not evaluate correctly in method: variables don't  update
+        all_x, all_y, incomplete, extras, examples_total = dev_bundle
+        sum_correct = tf.reduce_sum(tf.cast(correct_prediction, dtype=tf.float32))
+        examples_correct = 0
+        if incomplete == False:
+                while len(all_x) > 0:
+                    examples_correct += sum_correct.eval(feed_dict={x: all_x[0],
+                        y_: all_y[0], dropout: 1.0}, session = sess)
+                    all_x = all_x[1:]
+                    all_y = all_y[1:]
+        else:
+                while len(all_x) > 1:
+                    examples_correct += sum_correct.eval(feed_dict={x: all_x[0],
+                        y_: all_y[0], dropout: 1.0}, session = sess)
+                    all_x = all_x[1:]
+                    all_y = all_y[1:]
+                final_batch = np.asarray(correct_prediction.eval(feed_dict={x: all_x[0], y_: all_y[0], dropout: 1.0}, session = sess))
+                for k in range(0, params['BATCH_SIZE'] - extras):
+                    if final_batch[k] == True:
+                        examples_correct += 1
+        dev_accuracy = sum_prob(x, y_, dev_bundle, params, correct_prediction, dropout, sess)
+        dev_softmax = sum_prob(x, y_, dev_bundle, params, log_loss, dropout, sess)
         output.write("dev set accuracy %g, softmax %g \n"%(dev_accuracy, dev_softmax))
 
         if dev_accuracy > best_dev_accuracy:
@@ -281,9 +309,9 @@ def main(argv):
         # if dev_accuracy < best_dev_accuracy - .02:
         #     #early stop if accuracy drops significantly
         #     break
-        output.write('epoch time : ' + str(time.clock() - time))
-        epoch_time += time.clock() - time
-        time = time.clock()
+        output.write('epoch time : ' + str(time.clock() - time_index))
+        epoch_time += time.clock() - time_index
+        time_index = time.clock()
         output.write('. elapsed: ' + str(time.clock()) + '\n')
     output.write('avg time: ' + str(epoch_time/params['EPOCHS']))
     output.close()
