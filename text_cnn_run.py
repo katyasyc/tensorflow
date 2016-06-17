@@ -1,26 +1,19 @@
-#feed_dict rewrites the value of tensors in the graph
-# implement updating vocab
-# make adadelta work
-# look up adadelta source code
-# look up minibatch handling
-# specify batch size, squeeze dev/train totals to fit
-# use Higher Order Operations/TensorArrays?
 
 #other notes:
     # Adam does got lower softmax, by a couple %
     # dev softmax min is before dev accuracy max -- typically after epoch 2-4 (zero-based)
     # should we save the model with lowest cross entropy or highest accuracy?
+    # learning rate should be higher with random init, lower when we update word vecs, lower for larger datasets
 
 #minor changes:
-#shuffled batches each epoch
+    #shuffled batches each epoch
 
 #todo:
     # test amazon, congress, convote
-
-    #possible issues:
-    #weights not updating
-    #accuracy not printing correctly
-
+    # what causes programs to stop??
+    # checkpoint code
+    # test set
+    # clean up--more methods
 
 #program expects:
     # flags: -a for Adagrad, -u for updating, -w for use word2vec, -t for use tfidf
@@ -44,11 +37,12 @@ from text_cnn_methods import *
 import sys, getopt
 import os
 import time
+import logging
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 #define hyperparameters
 def define_globals(args):
-    params = {'WORD_VECTOR_LENGTH' : 100,
+    params = {'WORD_VECTOR_LENGTH' : 300,
         'FILTERS' : 100,
         'KERNEL_SIZES' : [3,4,5],
         'CLASSES' : 2,
@@ -98,6 +92,10 @@ def analyze_argv(argv):
     params = define_globals(args)
     if args[0] == 'sst1':
         params['CLASSES'] = 5
+    params = analyze_opts(opts, params)
+    return args, params
+
+def analyze_opts(opts, params)
     for opt in opts:
         if opt[0] == ("-a"):
             params['Adagrad'] = True
@@ -116,7 +114,7 @@ def analyze_argv(argv):
         if opt[0] == ('-s'):
             params['BATCH_SIZE'] = 1
             params['OUTPUT_FILE_NAME'] += 'sgd'
-    return args, params
+    return params
 
 def sum_prob(x, y_, bundle, params, correct_prediction, dropout, sess):
         all_x, all_y, incomplete, extras, examples_total = bundle
@@ -144,12 +142,15 @@ def main(argv):
     args, params = analyze_argv(argv)
 
     output = initial_print_statements(params, args)
+    sys.stderr = output
     train_x, train_y = get_all(args[0], params['TRAIN_FILE_NAME'], params)
 
     dev_x, dev_y = get_all(args[0], params['DEV_FILE_NAME'], params)
+
+    params['MAX_LENGTH'] = get_max_length(train_x + dev_x)
     vocab = find_vocab(train_x + dev_x, params)
 
-    embed_keys, key_list = initialize_vocab(vocab, params)
+    embed_keys, key_array = initialize_vocab(vocab, params)
     train_x, train_y = sort_examples_by_length(train_x, train_y)
     dev_x, dev_y = sort_examples_by_length(dev_x, dev_y)
     train_eval_bundle = batch(train_x, train_y, params, embed_keys) + (len(train_y),)
@@ -172,7 +173,6 @@ def main(argv):
                                         key_list[embed_keys[idf_array[i][0]]]),
                                         average_weight)
 
-    key_array = np.asarray(key_list)
     output.write("Total vocab size: " + str(len(vocab))+ '\n')
     output.write('train set size: %d examples, %d batches per epoch\n'%(len(train_y), len(train_eval_bundle[0])))
     output.write("dev set size: " + str(len(dev_y))+ ' examples\n\n')
@@ -194,15 +194,17 @@ def main(argv):
     for kernel_size in params['KERNEL_SIZES']:
         slices, weights, biases = define_nn(embedding_output, kernel_size,
                                             params, slices, weights, biases)
-    # print slices
+    output.write('debug' + str(slices[0]))
     h_pool = tf.concat(3, slices)
+    output.write('debug' + str(h_pool))
     # print h_pool
     #apply dropout (p = TRAIN_DROPOUT or TEST_DROPOUT)
     dropout = tf.placeholder(tf.float32)
     h_pool_drop = tf.nn.dropout(h_pool, dropout)
 
     h_pool_flat = tf.reshape(h_pool_drop, [params['BATCH_SIZE'], -1])
-    # print h_pool_flat
+    output.write('debug' + str(h_pool_flat))
+    #why is h_pool_flat 50 by 600 when it should be 50 by 300 (100 filters * 3 slices???)
     #fully connected softmax layer
     W_fc = weight_variable([len(params['KERNEL_SIZES']) * params['FILTERS'],
                             params['CLASSES']])
@@ -244,6 +246,7 @@ def main(argv):
             #apply l2 clipping to weights and biases
             with sess.as_default():
                 # print weights[0].eval()
+
                 check_l2 = tf.reduce_sum(weights[0]).eval()
                 for W in weights:
                     W = tf.clip_by_average_norm(W, params['L2_NORM_CONSTRAINT'])
@@ -257,47 +260,13 @@ def main(argv):
             batches_x, batches_y = shuffle_in_unison(batches_x, batches_y)
         else:
             batches_x, batches_y = scramble_batches(train_x, train_y, params, embed_keys, train_eval_bundle[2], train_eval_bundle[3])
-        # train_softmax = cross_entropy.eval(feed_dict=
-        #     {x: sub_indices(train_x, embed_keys),
-        #     y_: train_y, dropout: 1.0}, session = sess)
-        # print 'batches', batches_x[0].shape,batches_x[0], batches_y[0]
-        # print 'train', train_eval_bundle[0][0].shape, train_eval_bundle[0][0], train_eval_bundle[1][0]
-        # print 'dev', dev_bundle[0][0].shape, dev_bundle[0][0], dev_bundle[1][0]
-        # print accuracy.eval(feed_dict={x: batches_x[0],
-        #                           y_: batches_y[0],
-        #                           dropout: params['TRAIN_DROPOUT']},
-        #                           session = sess)
         train_softmax = sum_prob(x, y_, train_eval_bundle, params, log_loss, dropout, sess)
 
-        train_accuracy = sum_prob(x, y_, train_eval_bundle, params, log_loss, dropout, sess)
+        train_accuracy = sum_prob(x, y_, train_eval_bundle, params, correct_prediction, dropout, sess)
 
         output.write("epoch %d, training accuracy %g, training softmax error %g \n"
             %(i, train_accuracy, train_softmax))
 
-        # dev_softmax = cross_entropy.eval(feed_dict=
-        #                             {x: sub_indices(dev_x, embed_keys),
-        #                              y_: dev_y, dropout: 1.0}, session = sess)
-
-        #does not evaluate correctly in method: variables don't  update
-        all_x, all_y, incomplete, extras, examples_total = dev_bundle
-        sum_correct = tf.reduce_sum(tf.cast(correct_prediction, dtype=tf.float32))
-        examples_correct = 0
-        if incomplete == False:
-                while len(all_x) > 0:
-                    examples_correct += sum_correct.eval(feed_dict={x: all_x[0],
-                        y_: all_y[0], dropout: 1.0}, session = sess)
-                    all_x = all_x[1:]
-                    all_y = all_y[1:]
-        else:
-                while len(all_x) > 1:
-                    examples_correct += sum_correct.eval(feed_dict={x: all_x[0],
-                        y_: all_y[0], dropout: 1.0}, session = sess)
-                    all_x = all_x[1:]
-                    all_y = all_y[1:]
-                final_batch = np.asarray(correct_prediction.eval(feed_dict={x: all_x[0], y_: all_y[0], dropout: 1.0}, session = sess))
-                for k in range(0, params['BATCH_SIZE'] - extras):
-                    if final_batch[k] == True:
-                        examples_correct += 1
         dev_accuracy = sum_prob(x, y_, dev_bundle, params, correct_prediction, dropout, sess)
         dev_softmax = sum_prob(x, y_, dev_bundle, params, log_loss, dropout, sess)
         output.write("dev set accuracy %g, softmax %g \n"%(dev_accuracy, dev_softmax))
@@ -313,6 +282,8 @@ def main(argv):
         epoch_time += time.clock() - time_index
         time_index = time.clock()
         output.write('. elapsed: ' + str(time.clock()) + '\n')
+    sys.stderr.close()
+    sys.stderr = sys.__stderr__
     output.write('avg time: ' + str(epoch_time/params['EPOCHS']))
     output.close()
 if __name__ == "__main__": main(sys.argv[1:])

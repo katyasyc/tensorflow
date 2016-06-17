@@ -333,8 +333,11 @@ def initialize_vocab(vocab, params):
             #turn into floats
             if line[0] in vocab:
                 vector = []
-                for j in range(1, len(line)):
-                    vector.append(float(line[j]))
+                for word in line[1:]:
+                    vector.append(float(word))
+                # print len(vector), vector
+                if len(vector) != params['WORD_VECTOR_LENGTH']:
+                    raise ValueError
                 key_list.append(vector)
                 embed_keys[line[0]] = len(embed_keys)
                 vocab.remove(line[0])
@@ -345,6 +348,6 @@ def initialize_vocab(vocab, params):
         else:
             key_list.append(np.random.uniform(-0.25,0.25,params['WORD_VECTOR_LENGTH']))
         embed_keys[word] = len(embed_keys)
-    return embed_keys, key_list
+    return embed_keys, np.asarray(key_list)
 
 if __name__ == "__main__": main()
