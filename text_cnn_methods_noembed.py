@@ -52,20 +52,18 @@ def batch(input_list, output_list, params, embed_keys):
             all_y.append(np.reshape(np.asarray(output_list[0]), (1, 2)))
             input_list = input_list[1:]
             output_list = output_list[1:]
-        # print 'consecutive ex', all_x[1], all_x[2]
         return all_x, all_y, False, 0
     while len(output_list) >= params['BATCH_SIZE']:
-        # print 'start'
-        # print sub_indices(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys)
-        all_x.append(sub_indices(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys))
+        all_x.append(sub_vectors(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys, params))
         all_y.append(np.asarray(output_list[:params['BATCH_SIZE']]))
         input_list = input_list[params['BATCH_SIZE']:]
         output_list = output_list[params['BATCH_SIZE']:]
     if len(output_list) > 0:
         extras = params['BATCH_SIZE'] - len(output_list)
-        input_list = sub_indices(pad_all(input_list), embed_keys)
+        input_list = sub_vectors(pad_all(input_list), embed_keys, params)
+        print input_list.shape
         all_y.append(np.concatenate((np.asarray(output_list), np.zeros((extras, params['CLASSES']))), axis = 0))
-        zeroes = np.full((extras, input_list.shape[1]), embed_keys['<PAD>'], dtype=int)
+        zeroes = np.full((extras, input_list.shape[1], params['WORD_VECTOR_LENGTH']), 0, dtype=int)
         all_x.append(np.concatenate((input_list, zeroes), axis = 0))
         return all_x, all_y, True, extras
     else:
@@ -90,7 +88,8 @@ def scramble_batches(input_list, output_list, params, embed_keys,
     input_list, output_list = sort_examples_by_length(input_list, output_list, tokenize = False)
     batches_x, batches_y = [], []
     while len(output_list) >= params['BATCH_SIZE']:
-        batches_x.append(sub_indices(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys))
+        #batches_x.append(sub_indices(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys))
+        batches_x.append(sub_vectors(pad_all(input_list[:params['BATCH_SIZE']]), embed_keys, params))
         batches_y.append(np.asarray(output_list[:params['BATCH_SIZE']]))
         input_list = input_list[params['BATCH_SIZE']:]
         output_list = output_list[params['BATCH_SIZE']:]
@@ -142,7 +141,7 @@ def conv_slices(x, kernel_size, params, slices, weights, biases):
     relu = tf.nn.relu(tf.nn.bias_add(conv, b))
     #max pool; each neuron sees 1 filter and returns max over a sentence
 
-    pooled = tf.nn.max_pool(relu, ksize=[1, params['MAX_LENGTH'], 1, 1],
+    pooled = tf.nn.max_pool(relu, ksize=[1, tf.slice(tf.shape(relu), [1], [2]), 1, 1],
         strides=[1, params['MAX_LENGTH'], 1, 1], padding='SAME')
     slices.insert(len(slices), pooled)
     weights.insert(len(weights), W)
@@ -217,7 +216,7 @@ def sub_vectors(input_list, d, params):
     list_of_examples = []
     for i in range(len(input_list)):
         list_of_words = []
-        for j in range(params['MAX_LENGTH']):
+        for j in range(len(input_list[i])):
             list_of_words.append(d[input_list[i][j]])
         list_of_examples.append(list_of_words)
     return np.expand_dims(np.asarray(list_of_examples), 2)
@@ -230,13 +229,6 @@ def sort_examples_by_length(input_list, output_list, tokenize = True):
     new_input_list = []
     new_output_list = []
     for i in range(len(lengths)):
-
-        # if lengths[i] == 1:
-        #     del lengths[i]
-        #     del input_list[i]
-        #     del output_list[i]
-        # else:
-
         for j in range(len(new_lengths)):
             if lengths[i] < new_lengths[j]:
                 new_lengths.insert(j, lengths[i])
@@ -319,7 +311,6 @@ def find_vocab(list_of_sentences, params, vocab=None):
 #initialize dict of vocabulary with word2vec or random numbers
 def initialize_vocab(vocab, params):
     embed_keys = {}
-    key_list = []
     if params['USE_WORD2VEC']:
         word2vec = open(params['WORD_VECS_FILE_NAME'], 'r')
         word2vec.readline()
@@ -333,16 +324,15 @@ def initialize_vocab(vocab, params):
                 # print len(vector), vector
                 if len(vector) != params['WORD_VECTOR_LENGTH']:
                     raise ValueError
-                key_list.append(vector)
-                embed_keys[line[0]] = len(embed_keys)
+                embed_keys[line[0]] = vector
                 vocab.remove(line[0])
         word2vec.close()
     for word in vocab:
         if word == '<PAD>':
-            key_list.append(np.zeros([params['WORD_VECTOR_LENGTH']]))
+            vector = (np.zeros([params['WORD_VECTOR_LENGTH']]))
         else:
-            key_list.append(np.random.uniform(-0.25,0.25,params['WORD_VECTOR_LENGTH']))
-        embed_keys[word] = len(embed_keys)
-    return embed_keys, np.asarray(key_list)
+            vector = (np.random.uniform(-0.25,0.25,params['WORD_VECTOR_LENGTH']))
+        embed_keys[word] = vector
+    return embed_keys
 
 if __name__ == "__main__": main()

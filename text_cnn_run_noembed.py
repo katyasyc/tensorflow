@@ -34,7 +34,7 @@ import numpy as np
 import tensorflow as tf
 import random
 import linecache
-from text_cnn_methods import *
+from text_cnn_methods_noembed import *
 import previous_text_cnn_methods
 import sys, getopt
 import os
@@ -61,13 +61,12 @@ def define_globals(args):
         'LEARNING_RATE' : args[1],
         'USE_TFIDF' : False,
         'USE_WORD2VEC' : False,
-        'USE_DELTA' : False,
         'UPDATE_WORD_VECS' : False,
         'TRAIN_FILE_NAME' : 'train',
         'DEV_FILE_NAME' : 'dev',
         'WORD_VECS_FILE_NAME' : 'output.txt',
-        'OUTPUT_FILE_NAME' : args[0],
-        'SST' : False,
+        'OUTPUT_FILE_NAME' : 'noembed' + args[0],
+        'SST' : True,
         'ICMB' : False,
         'TREC' : False,
         'TEST' : False,
@@ -82,7 +81,7 @@ def define_globals(args):
 
 def analyze_argv(argv):
     try:
-        opts, args = getopt.getopt(argv, "wtausebd")
+        opts, args = getopt.getopt(argv, "wtause")
     except getopt.GetoptError:
         print('Unable to run; GetoptError')
         sys.exit(2)
@@ -94,8 +93,6 @@ def analyze_argv(argv):
         print('Unable to run; command line input does not match')
         sys.exit(2)
     params = define_globals(args)
-    if 'sst' in args[0]:
-        params['SST'] = True
     if args[0] == 'sst1':
         params['CLASSES'] = 5
     params = analyze_opts(opts, params)
@@ -122,15 +119,7 @@ def analyze_opts(opts, params):
             params['OUTPUT_FILE_NAME'] += 'sgd'
         if opt[0] == ('-e'):
             params['TEST'] = True
-        if opt[0] == ('-b'):
-            params['EPOCHS'] = 2
-            params['OUTPUT_FILE_NAME'] += 'abbrev'
-            params['FILTERS'] = 10
-            params['KERNEL_SIZES'] = [3]
-        if opt[0] == ('-d'):
-            params['USE_DELTA'] = True
-            params['OUTPUT_FILE_NAME'] += 'delta'
-        return params
+    return params
 
 def sum_prob(x, y_, bundle, params, correct_prediction, dropout, sess):
         all_x, all_y, incomplete, extras, examples_total = bundle
@@ -154,19 +143,15 @@ def sum_prob(x, y_, bundle, params, correct_prediction, dropout, sess):
                     examples_correct += 1
         return float(examples_correct) / examples_total
 
-def define_nn(params, key_array):
+def define_nn(params):
     x = tf.placeholder(tf.int32, [params['BATCH_SIZE'], None])
     y_ = tf.placeholder(tf.float32, [params['BATCH_SIZE'], params['CLASSES']])
-    word_embeddings = tf.Variable(tf.convert_to_tensor(key_array, dtype = tf.float32),
-                                  trainable = params['UPDATE_WORD_VECS'])
-    if params['USE_DELTA']:
-        W_delta = tf.Variable(tf.constant(1.0, shape=key_array.shape))
-        weighted_word_embeddings = tf.mul(word_embeddings, W_delta)
-        embedding_layer = tf.nn.embedding_lookup(weighted_word_embeddings, x)
-    else:
-        embedding_layer = tf.nn.embedding_lookup(word_embeddings, x)
-    embedding_output = tf.reshape(embedding_layer,
-                    [params['BATCH_SIZE'], -1, 1, params['WORD_VECTOR_LENGTH']])
+
+    # word_embeddings = tf.Variable(tf.convert_to_tensor(key_array, dtype = tf.float32),
+    #                               trainable = params['UPDATE_WORD_VECS'])
+    # embedding_layer = tf.nn.embedding_lookup(word_embeddings, x)
+    # embedding_output = tf.reshape(embedding_layer,
+    #                 [params['BATCH_SIZE'], -1, 1, params['WORD_VECTOR_LENGTH']])
 
     #init lists for convolutional layer
     slices = []
@@ -174,8 +159,10 @@ def define_nn(params, key_array):
     biases = []
     #loop over KERNEL_SIZES, each time initializing a slice
     for kernel_size in params['KERNEL_SIZES']:
-        slices, weights, biases = conv_slices(embedding_output, kernel_size,
+        slices, weights, biases = conv_slices(x, kernel_size,
                                             params, slices, weights, biases)
+        # slices, weights, biases = conv_slices(embedding_output, kernel_size,
+        #                                     params, slices, weights, biases)
     # output.write('debug' + str(slices[0]))
     h_pool = tf.concat(3, slices)
     #apply dropout (p = TRAIN_DROPOUT or TEST_DROPOUT)
@@ -192,25 +179,21 @@ def define_nn(params, key_array):
 
     #define error for training steps
     log_loss = -tf.reduce_sum(y_ * tf.log(y_conv), reduction_indices=[1])
+    cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_conv), reduction_indices=[1]))
 
     #define accuracy for evaluation
     correct_prediction = tf.equal(tf.argmax(y_conv,1), tf.argmax(y_,1))
-    cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_conv), reduction_indices=[1]))
-    return x, y_, dropout, weights, biases, W_fc, b_fc, log_loss, correct_prediction, cross_entropy
+    return x, y_, dropout, weights, biases, W_fc, b_fc, log_loss, correct_prediction
 
 
 
-def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array, embed_keys, train_x, train_y):
+def train(params, output, train_eval_bundle, dev_bundle, batches_x, batches_y, key_array, embed_keys, train_x, train_y):
     with tf.Graph().as_default():
-        x, y_, dropout, weights, biases, W_fc, b_fc, log_loss, correct_prediction, cross_entropy = define_nn(params, key_array)
+        x, y_, dropout, weights, biases, W_fc, b_fc, log_loss, correct_prediction = define_nn(params)
         if params['Adagrad']:
             train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
         else:
             train_step = tf.train.AdamOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
-        if params['BATCH_SIZE'] == 1:
-            batches_x, batches_y = train_eval_bundle[:2]
-        else:
-            batches_x, batches_y = scramble_batches(train_x, train_y, params, embed_keys, train_eval_bundle[2], train_eval_bundle[3])
 
         saver = tf.train.Saver(tf.all_variables())
         #run session
@@ -223,7 +206,7 @@ def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array,
         best_dev_accuracy = 0
         train_softmax = sum_prob(x, y_, train_eval_bundle, params, log_loss, dropout, sess)
         initial_accuracy = sum_prob(x, y_, train_eval_bundle, params, correct_prediction, dropout, sess)
-        output.write("initial accuracy %g softmax %g \n"%(initial_accuracy, train_softmax))
+        output.write("initial accuracy %g softmax%g \n"%(initial_accuracy, train_softmax))
         output.write('start time: ' + str(time.clock()) + '\n')
         time_index = time.clock()
         epoch_time = 0
@@ -239,7 +222,7 @@ def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array,
                     # print weights[0].eval()
                     if j == 0:
                         l2_loss = tf.div(tf.sqrt(tf.nn.l2_loss(weights[0])), tf.convert_to_tensor(2.0)).eval()
-                        output.write('l2 loss is %g\n' %l2_loss)
+                        output.write('l2 loss is %g' %l2_loss)
                     check_l2 = tf.reduce_sum(weights[0]).eval()
                     for W in weights:
                         W = tf.clip_by_average_norm(W, params['L2_NORM_CONSTRAINT'])
@@ -265,23 +248,24 @@ def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array,
             output.write("dev set accuracy %g, softmax %g \n"%(dev_accuracy, dev_softmax))
 
             if dev_accuracy > best_dev_accuracy:
-                checkpoint = saver.save(sess, 'text_cnn_run' + params['OUTPUT_FILE_NAME'], global_step = params['epoch'])
+                saver.save(sess, 'text_cnn_run' + params['OUTPUT_FILE_NAME'], global_step = params['epoch'])
                 best_dev_accuracy = dev_accuracy
 
-            # if dev_accuracy < best_dev_accuracy - .02:
-            #     #early stop if accuracy drops significantly
-            #     break
+            if dev_accuracy < best_dev_accuracy - .02:
+                #early stop if accuracy drops significantly
+                break
             output.write('epoch time : ' + str(time.clock() - time_index))
             epoch_time += time.clock() - time_index
             time_index = time.clock()
             output.write('. elapsed: ' + str(time.clock()) + '\n')
-        output.write('Max accuracy ' + str(best_dev_accuracy))
-        output.write(str(params['TEST']))
-        if params['TEST']:
-            output.write('Testing:\n')
-            saver.restore(sess, checkpoint)
-            test_accuracy = sum_prob(x, y_, test_bundle, params, correct_prediction, dropout, sess)
-            output.write('Final test accuracy:')
+        # if params['TEST']:
+        #     output.write('Testing:\n')
+        #     test_x, test_y = sort_examples_by_length(test_x, test_y)
+        #     test_bundle = batch(test_x, test_y, params, embed_keys) + (len(test_y),)
+        #     saver.restore
+        #     test_accuracy = sum_prob(x, y_, test_bundle, params, correct_prediction, dropout, sess)
+        #     output.write('Final test accuracy: %g' %test_accuracy)
+
         return epoch_time
 
 
@@ -297,23 +281,24 @@ def main(argv):
         test_x, test_y = get_all(args[0], 'test', params)
     else:
         test_x, test_y = [],[]
-
     params['MAX_LENGTH'] = get_max_length(train_x + dev_x + test_x)
     vocab = find_vocab(train_x + dev_x + test_x, params)
-    embed_keys, key_array = initialize_vocab(vocab, params)
+    keys = initialize_vocab(vocab, params)
     train_x, train_y = sort_examples_by_length(train_x, train_y)
     dev_x, dev_y = sort_examples_by_length(dev_x, dev_y)
-    if params['TEST']:
-        test_x, test_y = sort_examples_by_length(test_x, test_y)
-        test_bundle = batch(test_x, test_y, params, embed_keys) + (len(test_y),)
+    train_eval_bundle = batch(train_x, train_y, params, keys) + (len(train_y),)
+    dev_bundle = batch(dev_x, dev_y, params, keys) + (len(dev_y),)
+    # train_eval_bundle = batch(train_x, train_y, params, embed_keys) + (len(train_y),)
+    # dev_bundle = batch(dev_x, dev_y, params, embed_keys) + (len(dev_y),)
+    if params['BATCH_SIZE'] == 1:
+        batches_x, batches_y = train_eval_bundle[:2]
     else:
-        test_bundle = ()
-    train_eval_bundle = batch(train_x, train_y, params, embed_keys) + (len(train_y),)
-    dev_bundle = batch(dev_x, dev_y, params, embed_keys) + (len(dev_y),)
+        batches_x, batches_y = scramble_batches(train_x, train_y, params, keys, train_eval_bundle[2], train_eval_bundle[3])
+        # batches_x, batches_y = scramble_batches(train_x, train_y, params, embed_keys, train_eval_bundle[2], train_eval_bundle[3])
     output.write("Total vocab size: " + str(len(vocab))+ '\n')
     output.write('train set size: %d examples, %d batches per epoch\n'%(len(train_y), len(train_eval_bundle[0])))
     output.write("dev set size: " + str(len(dev_y))+ ' examples\n\n')
-    epoch_time = train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array, embed_keys, train_x, train_y)
+    epoch_time = train(params, output, train_eval_bundle, dev_bundle, batches_x, batches_y, key_array, keys, train_x, train_y)
     output.write('avg time: ' + str(epoch_time/params['EPOCHS']))
     sys.stderr.close()
     sys.stderr = sys.__stderr__
