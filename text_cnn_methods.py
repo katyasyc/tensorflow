@@ -18,14 +18,16 @@ def initial_print_statements(params, args):
     params['OUTPUT_FILE_NAME'] += ','
     if params['UPDATE_WORD_VECS']:
         params['OUTPUT_FILE_NAME'] += 'upd'
-    params['OUTPUT_FILE_NAME'] += args.string
-    output = open(params['OUTPUT_FILE_NAME'] + '.txt', 'a', 0)
+    if params['USE_DELTA']:
+        params['OUTPUT_FILE_NAME'] += 'delta'
+    params['OUTPUT_FILE_NAME'] += args.string + '.txt'
+    output = open(params['OUTPUT_FILE_NAME'], 'a', 0)
     if params['Adagrad']:
-        output.write("Running Adagrad on %s with a learning rate of %g" %(args.path, params['LEARNING_RATE']))
+        output.write("Running Adagrad on %s with a learning rate of " %args.path)
     else:
-        output.write("Running Adam on %s with a learning rate of %g" %(args.path, params['LEARNING_RATE']))
-    output.write(str(params['LEARNING_RATE']) + ' and %i epochs\n'%params['EPOCHS'])
-    output.write('using batch size ' + str(params['BATCH_SIZE']))
+        output.write("Running Adam on %s with a learning rate of " %args.path)
+    output.write('%g and %i epochs\n'%(params['LEARNING_RATE'], params['EPOCHS']))
+    output.write('using batch size %i' %(params['BATCH_SIZE']))
     if params['USE_TFIDF']:
         output.write(', tfidf, ')
     else:
@@ -33,7 +35,7 @@ def initial_print_statements(params, args):
     if params['USE_WORD2VEC']:
         output.write('word2vec, ')
     else:
-        output.write('random init, ')
+        output.write('rand init, ')
     if params['UPDATE_WORD_VECS']:
         output.write('updating.\n')
     else:
@@ -71,12 +73,28 @@ def batch(input_list, output_list, params, embed_keys):
     else:
         return all_x, all_y, False, 0
 
-def scramble_batches(input_list, output_list, params, embed_keys,
-                     train_eval_bundle):
+def flex(input_list, flex):
+    for example in input_list:
+        #20% chance of padding the left side
+        if boolean_percent(20):
+            for i in range(flex):
+                example.insert(0, '<PAD>')
+        #20% chance of padding the right
+        if boolean_percent(20):
+            for i in range(flex):
+                example.append('<PAD>')
+
+def boolean_percent(percent):
+    return random.randrange(100) < percent
+
+def scramble_batches(params, train_eval_bundle, batches_bundle):
+    input_list, output_list, embed_keys = batches_bundle
     incomplete = train_eval_bundle[2]
     if incomplete:
         extras = train_eval_bundle[3]
     input_list, output_list = shuffle_in_unison(input_list, output_list)
+    if params['FLEX'] in (1,10):
+        input_list = flex(input_list, params['FLEX'])
     # if len(input_list) > params['MAX_EPOCH_SIZE']:
     #     extras = params['MAX_EPOCH_SIZE'] % params['BATCH_SIZE']
     #     input_list = input_list[:(params['MAX_EPOCH_SIZE']) - extras]
