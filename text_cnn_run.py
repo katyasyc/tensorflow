@@ -36,7 +36,7 @@ import random
 import linecache
 from text_cnn_methods import *
 import previous_text_cnn_methods
-import sys, getopt
+import sys, argparse
 import os
 import time
 import logging
@@ -54,19 +54,20 @@ def define_globals(args):
         'TRAIN_DROPOUT' : 0.5,
 
         'BATCH_SIZE' : 50,
-        'EPOCHS' : args[2],
+        'EPOCHS' : args.EPOCHS,
         'MAX_EPOCH_SIZE' : 10000,
 
-        'Adagrad' : False,
-        'LEARNING_RATE' : args[1],
-        'USE_TFIDF' : False,
-        'USE_WORD2VEC' : False,
-        'USE_DELTA' : False,
-        'UPDATE_WORD_VECS' : False,
+        'Adagrad' : args.Adagrad,
+        'LEARNING_RATE' : args.LEARNING_RATE,
+        'USE_TFIDF' : args.tfidf,
+        'USE_WORD2VEC' : args.word2vec,
+        'USE_DELTA' : args.delta,
+        'UPDATE_WORD_VECS' : args.update,
+        'DIR' : args.path,
         'TRAIN_FILE_NAME' : 'train',
         'DEV_FILE_NAME' : 'dev',
         'WORD_VECS_FILE_NAME' : 'output.txt',
-        'OUTPUT_FILE_NAME' : args[0],
+        'OUTPUT_FILE_NAME' : '' + str(args.path),
         'SST' : False,
         'ICMB' : False,
         'TREC' : False,
@@ -80,57 +81,6 @@ def define_globals(args):
         'changes' : 0}
     return params
 
-def analyze_argv(argv):
-    try:
-        opts, args = getopt.getopt(argv, "wtausebd")
-    except getopt.GetoptError:
-        print('Unable to run; GetoptError')
-        sys.exit(2)
-    try:
-        args[1] = float(args[1])
-        args[2] = int(args[2])
-    except SyntaxError:
-        print args[1], "type", type(args[1])
-        print('Unable to run; command line input does not match')
-        sys.exit(2)
-    params = define_globals(args)
-    if 'sst' in args[0]:
-        params['SST'] = True
-    if args[0] == 'sst1':
-        params['CLASSES'] = 5
-    params = analyze_opts(opts, params)
-    return args, params
-
-def analyze_opts(opts, params):
-    for opt in opts:
-        if opt[0] == ("-a"):
-            params['Adagrad'] = True
-            params['OUTPUT_FILE_NAME'] += 'Adagrad'
-            break
-    if params['Adagrad'] == False:
-        params['OUTPUT_FILE_NAME'] += 'Adam'
-    params['OUTPUT_FILE_NAME'] += str(params['LEARNING_RATE'])
-    for opt in opts:
-        if opt[0] == ('-w'):
-            params['USE_WORD2VEC'] = True
-        if opt[0] == ('-t'):
-            params['USE_TFIDF'] = True
-        if opt[0] == ('-u'):
-            params['UPDATE_WORD_VECS'] = True
-        if opt[0] == ('-s'):
-            params['BATCH_SIZE'] = 1
-            params['OUTPUT_FILE_NAME'] += 'sgd'
-        if opt[0] == ('-e'):
-            params['TEST'] = True
-        if opt[0] == ('-b'):
-            params['EPOCHS'] = 2
-            params['OUTPUT_FILE_NAME'] += 'abbrev'
-            params['FILTERS'] = 10
-            params['KERNEL_SIZES'] = [3]
-        if opt[0] == ('-d'):
-            params['USE_DELTA'] = True
-            params['OUTPUT_FILE_NAME'] += 'delta'
-        return params
 
 def sum_prob(x, y_, bundle, params, correct_prediction, dropout, sess):
         all_x, all_y, incomplete, extras, examples_total = bundle
@@ -154,28 +104,17 @@ def sum_prob(x, y_, bundle, params, correct_prediction, dropout, sess):
                     examples_correct += 1
         return float(examples_correct) / examples_total
 
-def define_nn(params, key_array):
-    x = tf.placeholder(tf.int32, [params['BATCH_SIZE'], None])
-    y_ = tf.placeholder(tf.float32, [params['BATCH_SIZE'], params['CLASSES']])
-    word_embeddings = tf.Variable(tf.convert_to_tensor(key_array, dtype = tf.float32),
-                                  trainable = params['UPDATE_WORD_VECS'])
+def embed_layer(params, key_array, word_embeddings):
     if params['USE_DELTA']:
         W_delta = tf.Variable(tf.constant(1.0, shape=key_array.shape))
         weighted_word_embeddings = tf.mul(word_embeddings, W_delta)
         embedding_layer = tf.nn.embedding_lookup(weighted_word_embeddings, x)
     else:
         embedding_layer = tf.nn.embedding_lookup(word_embeddings, x)
-    embedding_output = tf.reshape(embedding_layer,
+    return tf.reshape(embedding_layer,
                     [params['BATCH_SIZE'], -1, 1, params['WORD_VECTOR_LENGTH']])
 
-    #init lists for convolutional layer
-    slices = []
-    weights = []
-    biases = []
-    #loop over KERNEL_SIZES, each time initializing a slice
-    for kernel_size in params['KERNEL_SIZES']:
-        slices, weights, biases = conv_slices(embedding_output, kernel_size,
-                                            params, slices, weights, biases)
+def fully_connected_layer(h_pool, params):
     # output.write('debug' + str(slices[0]))
     h_pool = tf.concat(3, slices)
     #apply dropout (p = TRAIN_DROPOUT or TEST_DROPOUT)
@@ -188,8 +127,23 @@ def define_nn(params, key_array):
     W_fc = weight_variable([len(params['KERNEL_SIZES']) * params['FILTERS'],
                             params['CLASSES']])
     b_fc = bias_variable([params['CLASSES']])
-    y_conv = tf.nn.softmax(tf.matmul(h_pool_flat, W_fc) + b_fc)
+    return tf.nn.softmax(tf.matmul(h_pool_flat, W_fc) + b_fc)
 
+def define_nn(params, key_array):
+    x = tf.placeholder(tf.int32, [params['BATCH_SIZE'], None])
+    y_ = tf.placeholder(tf.float32, [params['BATCH_SIZE'], params['CLASSES']])
+    word_embeddings = tf.Variable(tf.convert_to_tensor(key_array, dtype = tf.float32),
+                                  trainable = params['UPDATE_WORD_VECS'])
+    embedding_output = embed_layer(params, key_array, word_embeddings)
+    #init lists for convolutional layer
+    slices = []
+    weights = []
+    biases = []
+    #loop over KERNEL_SIZES, each time initializing a slice
+    for kernel_size in params['KERNEL_SIZES']:
+        slices, weights, biases = conv_slices(embedding_output, kernel_size,
+                                            params, slices, weights, biases)
+    y_conv = fully_connected_layer(h_pool, params)
     #define error for training steps
     log_loss = -tf.reduce_sum(y_ * tf.log(y_conv), reduction_indices=[1])
 
@@ -198,7 +152,11 @@ def define_nn(params, key_array):
     cross_entropy = tf.reduce_mean(-tf.reduce_sum(y_ * tf.log(y_conv), reduction_indices=[1]))
     return x, y_, dropout, weights, biases, W_fc, b_fc, log_loss, correct_prediction, cross_entropy
 
-
+def get_batches(params, train_eval_bundle, train_x, train_y, embed_keys):
+        if params['BATCH_SIZE'] == 1:
+            return train_eval_bundle[:2]
+        else:
+            return scramble_batches(train_x, train_y, params, embed_keys, train_eval_bundle)
 
 def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array, embed_keys, train_x, train_y):
     with tf.Graph().as_default():
@@ -207,11 +165,7 @@ def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array,
             train_step = tf.train.AdagradOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
         else:
             train_step = tf.train.AdamOptimizer(params['LEARNING_RATE']).minimize(cross_entropy)
-        if params['BATCH_SIZE'] == 1:
-            batches_x, batches_y = train_eval_bundle[:2]
-        else:
-            batches_x, batches_y = scramble_batches(train_x, train_y, params, embed_keys, train_eval_bundle[2], train_eval_bundle[3])
-
+        get_batches(params, train_eval_bundle, train_x, train_y, embed_keys)
         saver = tf.train.Saver(tf.all_variables())
         #run session
         output.write( 'Initializing session...\n\n')
@@ -237,6 +191,7 @@ def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array,
                 #apply l2 clipping to weights and biases
                 with sess.as_default():
                     # print weights[0].eval()
+                    #do weights method
                     if j == 0:
                         l2_loss = tf.div(tf.sqrt(tf.nn.l2_loss(weights[0])), tf.convert_to_tensor(2.0)).eval()
                         output.write('l2 loss is %g\n' %l2_loss)
@@ -249,10 +204,9 @@ def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array,
                     b_fc = tf.clip_by_average_norm(b_fc, params['L2_NORM_CONSTRAINT'])
                     if np.asscalar(check_l2) > np.asscalar(tf.reduce_sum(weights[0]).eval()):
                         output.write('weights clipped\n')
-            if params['BATCH_SIZE'] == 1:
-                batches_x, batches_y = shuffle_in_unison(batches_x, batches_y)
-            else:
-                batches_x, batches_y = scramble_batches(train_x, train_y, params, embed_keys, train_eval_bundle[2], train_eval_bundle[3])
+                    #end do weights method
+                    get_batches(params, train_eval_bundle, train_x, train_y, embed_keys)
+
             train_softmax = sum_prob(x, y_, train_eval_bundle, params, log_loss, dropout, sess)
 
             train_accuracy = sum_prob(x, y_, train_eval_bundle, params, correct_prediction, dropout, sess)
@@ -265,7 +219,8 @@ def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array,
             output.write("dev set accuracy %g, softmax %g \n"%(dev_accuracy, dev_softmax))
 
             if dev_accuracy > best_dev_accuracy:
-                checkpoint = saver.save(sess, 'text_cnn_run' + params['OUTPUT_FILE_NAME'], global_step = params['epoch'])
+                if params['TEST']:
+                    checkpoint = saver.save(sess, 'text_cnn_run' + params['OUTPUT_FILE_NAME'], global_step = params['epoch'])
                 best_dev_accuracy = dev_accuracy
 
             # if dev_accuracy < best_dev_accuracy - .02:
@@ -275,8 +230,7 @@ def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array,
             epoch_time += time.clock() - time_index
             time_index = time.clock()
             output.write('. elapsed: ' + str(time.clock()) + '\n')
-        output.write('Max accuracy ' + str(best_dev_accuracy))
-        output.write(str(params['TEST']))
+        output.write('Max accuracy ' + str(best_dev_accuracy) + '\n')
         if params['TEST']:
             output.write('Testing:\n')
             saver.restore(sess, checkpoint)
@@ -285,16 +239,37 @@ def train(params, output, train_eval_bundle, dev_bundle, test_bundle, key_array,
         return epoch_time
 
 
-def main(argv):
-    args, params = analyze_argv(argv)
+def analyze_opts(args, params):
+    if args.path == 'sst1':
+        params['CLASSES'] = 5
+        params['SST'] = True
+    elif args.path == 'sst1':
+        params['SST'] == True
 
+    if params['Adagrad'] == True:
+        params['OUTPUT_FILE_NAME'] += 'Adagrad'
+    else:
+        params['OUTPUT_FILE_NAME'] += 'Adam'
+    params['OUTPUT_FILE_NAME'] += str(params['LEARNING_RATE'])
+
+    if args.abbrev == True:
+        params['KERNEL_SIZES'] = [3]
+        params['FILTERS'] = 5
+    if args.sgd == True:
+        params['BATCH_SIZE'] = 1
+        params['OUTPUT_FILE_NAME'] += 'sgd'
+    return params
+
+def main(args):
+    params = define_globals(args)
+    params = analyze_opts(args, params)
     output = initial_print_statements(params, args)
     sys.stderr = output
-    train_x, train_y = get_all(args[0], params['TRAIN_FILE_NAME'], params)
+    train_x, train_y = get_all(params['DIR'], params['TRAIN_FILE_NAME'], params)
 
-    dev_x, dev_y = get_all(args[0], params['DEV_FILE_NAME'], params)
+    dev_x, dev_y = get_all(params['DIR'], params['DEV_FILE_NAME'], params)
     if params['TEST']:
-        test_x, test_y = get_all(args[0], 'test', params)
+        test_x, test_y = get_all(params['DIR'], 'test', params)
     else:
         test_x, test_y = [],[]
 
@@ -318,4 +293,20 @@ def main(argv):
     sys.stderr.close()
     sys.stderr = sys.__stderr__
     output.close()
-if __name__ == "__main__": main(sys.argv[1:])
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-a', '--Adagrad', action='store_true', default=False)
+    parser.add_argument('-w', '--word2vec', action='store_true', default=False)
+    parser.add_argument('-u', '--update', action='store_true', default=False)
+    parser.add_argument('-d', '--delta', action='store_true', default=False)
+    parser.add_argument('-e', '--test', action='store_true', default=False)
+    parser.add_argument('-b', '--abbrev', action='store_true', default=False)
+    parser.add_argument('-s', '--sgd', action='store_true', default=False)
+    parser.add_argument('-t', '--tfidf', action='store_true', default=False)
+    parser.add_argument('path', type=str)
+    parser.add_argument('LEARNING_RATE', type=float)
+    parser.add_argument('EPOCHS', type=int)
+    parser.add_argument('string')
+    args = parser.parse_args()
+    main(args)

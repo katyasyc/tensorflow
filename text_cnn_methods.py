@@ -7,7 +7,7 @@ import os.path
 import previous_text_cnn_methods
 
 def initial_print_statements(params, args):
-    params['OUTPUT_FILE_NAME'] += ',' + str(params['EPOCHS'])
+    params['OUTPUT_FILE_NAME'] += ',%i'%params['EPOCHS']
     if params['USE_TFIDF']:
         params['OUTPUT_FILE_NAME'] += 'tfidf'
     params['OUTPUT_FILE_NAME'] += ','
@@ -18,13 +18,13 @@ def initial_print_statements(params, args):
     params['OUTPUT_FILE_NAME'] += ','
     if params['UPDATE_WORD_VECS']:
         params['OUTPUT_FILE_NAME'] += 'upd'
-    params['OUTPUT_FILE_NAME'] += args[3]
+    params['OUTPUT_FILE_NAME'] += args.string
     output = open(params['OUTPUT_FILE_NAME'] + '.txt', 'a', 0)
     if params['Adagrad']:
-        output.write("Running Adagrad on " + args[0] + " with a learning rate of ")
+        output.write("Running Adagrad on %s with a learning rate of %g" %(args.path, params['LEARNING_RATE']))
     else:
-        output.write("Running Adam on " + args[0] + " with a learning rate of ")
-    output.write(str(params['LEARNING_RATE']) + ' and ' + str(params['EPOCHS']) + ' epochs\n')
+        output.write("Running Adam on %s with a learning rate of %g" %(args.path, params['LEARNING_RATE']))
+    output.write(str(params['LEARNING_RATE']) + ' and %i epochs\n'%params['EPOCHS'])
     output.write('using batch size ' + str(params['BATCH_SIZE']))
     if params['USE_TFIDF']:
         output.write(', tfidf, ')
@@ -72,7 +72,10 @@ def batch(input_list, output_list, params, embed_keys):
         return all_x, all_y, False, 0
 
 def scramble_batches(input_list, output_list, params, embed_keys,
-                     incomplete, extras):
+                     train_eval_bundle):
+    incomplete = train_eval_bundle[2]
+    if incomplete:
+        extras = train_eval_bundle[3]
     input_list, output_list = shuffle_in_unison(input_list, output_list)
     # if len(input_list) > params['MAX_EPOCH_SIZE']:
     #     extras = params['MAX_EPOCH_SIZE'] % params['BATCH_SIZE']
@@ -95,24 +98,6 @@ def scramble_batches(input_list, output_list, params, embed_keys,
         input_list = input_list[params['BATCH_SIZE']:]
         output_list = output_list[params['BATCH_SIZE']:]
     return batches_x, batches_y
-
-
-#get random batch of examples from train file
-def get_batches(params, train_x, train_y):
-    if params['epoch'] == 1:
-        np.random.seed(3435)
-        if train_y.shape[0] % params['BATCH_SIZE'] > 0:
-            extra_data_num = params['BATCH_SIZE'] - train_y.shape[0] % params['BATCH_SIZE']
-            train_set_x, train_set_y = shuffle_in_unison(train_x, train_y)
-            extra_data_x = train_set_x[:extra_data_num]
-            extra_data_y = train_set_y[:extra_data_num]
-            new_data_x = np.append(train_x, extra_data_x, axis=0)
-            new_data_y = np.append(train_y, extra_data_y, axis=0)
-        else:
-            new_data_x = train_x
-            new_data_y = train_y
-    new_data_x, new_data_y = shuffle_in_unison(new_data_x, new_data_y)
-    return new_data_x, new_data_y
 
 #index and loop through same batches again
 def get_batch(batches_x, batches_y, index, params):
